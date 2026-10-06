@@ -269,6 +269,35 @@ async function main() {
   assert((staffOrders.body.orders as Json[]).some((order) => String(order.id) === orderId), "staff queue must show new order");
   const accepted = await api(`/api/staff/orders/${orderId}/status`, { method: "POST", body: JSON.stringify({ status: "ACCEPTED" }) }, ownerCookie);
   expectStatus(accepted.response, 200, accepted.body);
+  const oldFlowRejected = await api(`/api/staff/orders/${orderId}/status`, { method: "POST", body: JSON.stringify({ status: "PREPARING" }) }, ownerCookie);
+  expectStatus(oldFlowRejected.response, 400, oldFlowRejected.body);
+
+  const newOrderResult = await api(`/api/customer/sessions/${beefSession.qrToken}/orders`, {
+    method: "POST",
+    body: JSON.stringify({ idempotencyKey: `phase7-direct-serve-${suffix}`, items: [{ menuItemId: itemId, quantity: 1 }] }),
+  });
+  expectStatus(newOrderResult.response, 201, newOrderResult.body);
+  const newOrderId = String((newOrderResult.body.order as Json).id);
+  const directServe = await api(`/api/staff/orders/${newOrderId}/status`, { method: "POST", body: JSON.stringify({ status: "SERVED" }) }, ownerCookie);
+  expectStatus(directServe.response, 409, directServe.body);
+
+  const legacyOrderIds: string[] = [];
+  for (const legacyStatus of ["PREPARING", "DELIVERING"] as const) {
+    const legacyResult = await api(`/api/customer/sessions/${beefSession.qrToken}/orders`, {
+      method: "POST",
+      body: JSON.stringify({ idempotencyKey: `phase7-legacy-${legacyStatus}-${suffix}`, items: [{ menuItemId: itemId, quantity: 1 }] }),
+    });
+    expectStatus(legacyResult.response, 201, legacyResult.body);
+    const legacyOrderId = String((legacyResult.body.order as Json).id);
+    legacyOrderIds.push(legacyOrderId);
+    await prisma.order.update({
+      where: { id: legacyOrderId },
+      data: { status: legacyStatus, statusEvents: { create: { fromStatus: "NEW", toStatus: legacyStatus, reason: "legacy fixture" } } },
+    });
+  }
+  const legacyQueue = await api("/api/staff/orders", {}, ownerCookie);
+  expectStatus(legacyQueue.response, 200, legacyQueue.body);
+  assert(legacyOrderIds.every((id) => (legacyQueue.body.orders as Json[]).some((order) => String(order.id) === id && ["PREPARING", "DELIVERING"].includes(String(order.status)))), "legacy orders must remain visible in the queue");
 
   const refreshed = await api(`/api/customer/sessions/${beefSession.qrToken}`);
   expectStatus(refreshed.response, 200, refreshed.body);
@@ -278,10 +307,18 @@ async function main() {
   await prisma.tableSession.update({ where: { id: beefId }, data: { endsAt: new Date(Date.now() - 60_000) } });
   const afterExpiry = await api(`/api/customer/sessions/${beefSession.qrToken}/orders`, { method: "POST", body: JSON.stringify({ idempotencyKey: `phase7-after-expiry-${suffix}`, items: [{ menuItemId: itemId, quantity: 1 }] }) });
   expectStatus(afterExpiry.response, 409, afterExpiry.body);
-  for (const status of ["PREPARING", "DELIVERING", "SERVED"]) {
-    const changed = await api(`/api/staff/orders/${orderId}/status`, { method: "POST", body: JSON.stringify({ status }) }, ownerCookie);
+  const served = await Promise.all([
+    api(`/api/staff/orders/${orderId}/status`, { method: "POST", body: JSON.stringify({ status: "SERVED" }) }, ownerCookie),
+    api(`/api/staff/orders/${orderId}/status`, { method: "POST", body: JSON.stringify({ status: "SERVED" }) }, ownerCookie),
+  ]);
+  assert.deepEqual(served.map((result) => result.response.status).sort((a, b) => a - b), [200, 409], "concurrent order status updates must allow one winner");
+  for (const legacyOrderId of legacyOrderIds) {
+    const changed = await api(`/api/staff/orders/${legacyOrderId}/status`, { method: "POST", body: JSON.stringify({ status: "SERVED" }) }, ownerCookie);
     expectStatus(changed.response, 200, changed.body);
   }
+  const customerAfterServed = await api(`/api/customer/sessions/${beefSession.qrToken}`);
+  expectStatus(customerAfterServed.response, 200, customerAfterServed.body);
+  assert.equal(String(((customerAfterServed.body.orders as Json[]).find((order) => String(order.id) === orderId) as Json).status), "SERVED", "customer polling must show the latest order status");
 
   const concurrentSession = await open(tables[2].id, beef.id, 349);
   assert(concurrentSession.qrToken);
@@ -305,7 +342,7 @@ async function main() {
     checks: [
       "table count increase/idempotency", "open-before-reduce conflict", "reduce-before-open rejection", "concurrent open/reduce serialization (12 rounds)", "inactive-table invariant", "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
       "pre-start rejection", "customer order and staff queue", "order status workflow", "idempotent retry",
-      "expiry behavior", "post-expiry existing order handling", "concurrent idempotency", "timer stability", "QR revocation on close",
+      "expiry behavior", "post-expiry existing order handling", "simplified order transitions", "legacy queue compatibility", "concurrent status update", "concurrent idempotency", "timer stability", "QR revocation on close",
     ],
   }));
 }

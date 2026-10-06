@@ -5,6 +5,7 @@ import { HttpError } from "@/lib/errors/http-error";
 import { assertOrderingWindow, getEffectiveTableStatus } from "@/lib/time/effective-status";
 import { withImageUrl } from "@/lib/storage/images";
 import { getRuntimeEnv } from "@/lib/config/env";
+import { canTransitionOrderStatus } from "@/lib/order-status";
 
 function requestFingerprint(items: Array<{ menuItemId: string; quantity: number }>): string {
   return createHash("sha256")
@@ -168,7 +169,7 @@ export async function updateOrderStatus(
   orderId: string,
   staffId: string,
   storeId: string,
-  toStatus: "ACCEPTED" | "PREPARING" | "DELIVERING" | "SERVED" | "CANCELLED",
+  toStatus: "ACCEPTED" | "SERVED" | "CANCELLED",
   reason?: string,
 ) {
   return prisma.$transaction(async (tx) => {
@@ -177,15 +178,7 @@ export async function updateOrderStatus(
     });
     if (!order) throw new HttpError(404, "ORDER_NOT_FOUND", "ไม่พบออเดอร์");
 
-    const allowed: Record<string, string[]> = {
-      NEW: ["ACCEPTED", "CANCELLED"],
-      ACCEPTED: ["PREPARING", "CANCELLED"],
-      PREPARING: ["DELIVERING", "CANCELLED"],
-      DELIVERING: ["SERVED", "CANCELLED"],
-      SERVED: [],
-      CANCELLED: [],
-    };
-    if (!allowed[order.status].includes(toStatus)) {
+    if (!canTransitionOrderStatus(order.status, toStatus)) {
       throw new HttpError(409, "INVALID_ORDER_TRANSITION", "ไม่สามารถเปลี่ยนสถานะออเดอร์นี้ได้");
     }
     if (toStatus === "CANCELLED" && !reason?.trim()) {
@@ -194,14 +187,27 @@ export async function updateOrderStatus(
 
     const nowRows = await tx.$queryRaw<Array<{ now: Date }>>`SELECT CURRENT_TIMESTAMP(3) AS now`;
     const now = nowRows[0]?.now ?? new Date();
-    const updated = await tx.order.update({
-      where: { id: order.id },
+    // The status predicate makes the transition compare-and-set. If another
+    // request changed the order after the read above, exactly one request can
+    // win and the other receives a conflict instead of creating a duplicate
+    // status event.
+    const claimed = await tx.order.updateMany({
+      where: { id: order.id, status: order.status },
       data: {
         status: toStatus,
         acceptedAt: toStatus === "ACCEPTED" ? now : undefined,
         servedAt: toStatus === "SERVED" ? now : undefined,
         cancelledAt: toStatus === "CANCELLED" ? now : undefined,
         cancellationReason: toStatus === "CANCELLED" ? reason : undefined,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new HttpError(409, "INVALID_ORDER_TRANSITION", "ออเดอร์ถูกเปลี่ยนสถานะไปแล้ว");
+    }
+
+    const updated = await tx.order.update({
+      where: { id: order.id },
+      data: {
         statusEvents: { create: { fromStatus: order.status, toStatus, reason, changedByStaffId: staffId } },
       },
       include: { items: true, statusEvents: true },

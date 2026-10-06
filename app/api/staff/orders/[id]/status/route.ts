@@ -7,7 +7,7 @@ import { z } from "zod";
 export const runtime = "nodejs";
 
 const statusSchema = z.object({
-  status: z.enum(["ACCEPTED", "PREPARING", "DELIVERING", "SERVED", "CANCELLED"]),
+  status: z.enum(["ACCEPTED", "SERVED", "CANCELLED"]),
   reason: z.string().trim().max(500).optional(),
 });
 
