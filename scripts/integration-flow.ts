@@ -4,9 +4,40 @@ import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { PrismaClient } from "../generated/prisma/client";
 import { hashPassword } from "../lib/auth/password";
 
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
-const prisma = new PrismaClient({ adapter: new PrismaMariaDb(process.env.DATABASE_URL) });
+const expectedAppUrl = "https://qr-order.test";
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL;
 const baseUrl = process.env.TEST_BASE_URL ?? "http://127.0.0.1:3000";
+
+function assertIntegrationConfiguration() {
+  const missing = [
+    ["TEST_DATABASE_URL", testDatabaseUrl],
+    ["DATABASE_URL", databaseUrl],
+    ["AUTH_SESSION_SECRET", process.env.AUTH_SESSION_SECRET],
+    ["QR_TOKEN_PEPPER", process.env.QR_TOKEN_PEPPER],
+    ["LOCAL_IMAGE_STORAGE_PATH", process.env.LOCAL_IMAGE_STORAGE_PATH],
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (missing.length > 0) throw new Error(`Integration configuration is missing: ${missing.join(", ")}`);
+  if (databaseUrl !== testDatabaseUrl) throw new Error("DATABASE_URL must equal TEST_DATABASE_URL for integration tests");
+  if (process.env.NEXT_PUBLIC_APP_URL !== expectedAppUrl) {
+    throw new Error(`Integration server must use NEXT_PUBLIC_APP_URL=${expectedAppUrl}`);
+  }
+
+  const parsedBaseUrl = new URL(baseUrl);
+  if (parsedBaseUrl.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(parsedBaseUrl.hostname)) {
+    throw new Error("TEST_BASE_URL must point to a local HTTP server (127.0.0.1, localhost, or ::1)");
+  }
+
+  const parsedDatabaseUrl = new URL(testDatabaseUrl!);
+  if (!["127.0.0.1", "localhost", "::1"].includes(parsedDatabaseUrl.hostname)) {
+    throw new Error("TEST_DATABASE_URL must point to a local test database");
+  }
+}
+
+// Run all checks before creating Prisma or any fixture rows. A bad server
+// configuration must fail before the script can mutate the test database.
+assertIntegrationConfiguration();
+const prisma = new PrismaClient({ adapter: new PrismaMariaDb(testDatabaseUrl!) });
 const suffix = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const password = `phase7-local-${suffix}`;
 
@@ -69,6 +100,91 @@ async function main() {
   const ownerCookie = cookieFrom(ownerLogin.response);
   assert(ownerCookie, "owner session cookie missing");
 
+  const setTables = async (count: number) => {
+    const result = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count }) }, ownerCookie);
+    expectStatus(result.response, 200, result.body);
+    assert.equal((result.body as Json).count, count);
+  };
+  const assertNoInactiveOccupiedTables = async (label: string) => {
+    const violations = await prisma.$queryRaw<Array<{ id: string; tableNumber: string }>>`
+      SELECT dining_tables.id, dining_tables.table_number AS tableNumber
+      FROM dining_tables
+      INNER JOIN active_table_sessions ON active_table_sessions.table_id = dining_tables.id
+      WHERE dining_tables.store_id = ${store.id} AND dining_tables.is_active = false
+    `;
+    assert.equal(violations.length, 0, `${label}: inactive tables must not have active sessions: ${JSON.stringify(violations)}`);
+  };
+  await setTables(20);
+  const twentyTables = await prisma.diningTable.findMany({ where: { storeId: store.id, tableNumber: { in: Array.from({ length: 20 }, (_, index) => String(index + 1)) } } });
+  assert.equal(twentyTables.length, 20, "setting 20 tables must create tables 1-20");
+  assert(twentyTables.every((table) => table.isActive && table.capacity === null), "managed tables must be active and have no capacity");
+  await setTables(20);
+  assert.equal(await prisma.diningTable.count({ where: { storeId: store.id, tableNumber: { in: Array.from({ length: 20 }, (_, index) => String(index + 1)) } } }), 20, "repeating the same count must not duplicate tables");
+  await setTables(50);
+  assert.equal(await prisma.diningTable.count({ where: { storeId: store.id, isActive: true, tableNumber: { in: Array.from({ length: 50 }, (_, index) => String(index + 1)) } } }), 50, "setting 50 tables must activate tables 1-50");
+
+  const table21 = await prisma.diningTable.findFirstOrThrow({ where: { storeId: store.id, tableNumber: "21" } });
+  const numberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table21.id, packageId: pork.id, guestCount: 3, payment: { amount: 897, method: "test" } }) }, ownerCookie);
+  expectStatus(numberOpen.response, 201, numberOpen.body);
+  const numberSessionId = String(((numberOpen.body as Json).session as Json).id);
+  const numberClosed = await api(`/api/staff/table-sessions/${numberSessionId}/close`, { method: "POST" }, ownerCookie);
+  expectStatus(numberClosed.response, 200, numberClosed.body);
+  await setTables(20);
+  const historicalTable21 = await prisma.diningTable.findUniqueOrThrow({ where: { id: table21.id } });
+  assert.equal(historicalTable21.isActive, false, "reducing count must deactivate tables above the new count");
+  assert(await prisma.tableSession.findUnique({ where: { id: numberSessionId } }), "reducing count must preserve table session history");
+
+  const table20 = await prisma.diningTable.findFirstOrThrow({ where: { storeId: store.id, tableNumber: "20" } });
+  const activeNumberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "test" } }) }, ownerCookie);
+  expectStatus(activeNumberOpen.response, 201, activeNumberOpen.body);
+  const activeNumberSessionId = String(((activeNumberOpen.body as Json).session as Json).id);
+  const blockedReduction = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count: 19 }) }, ownerCookie);
+  expectStatus(blockedReduction.response, 409, blockedReduction.body);
+  assert(String((blockedReduction.body as Json).error && ((blockedReduction.body as Json).error as Json).message).includes("โต๊ะ 20"), "blocked reduction must name the occupied table");
+  const activeTable20 = await prisma.diningTable.findUniqueOrThrow({ where: { id: table20.id } });
+  assert.equal(activeTable20.isActive, true, "blocked reduction must not deactivate the occupied table");
+  const activeNumberClosed = await api(`/api/staff/table-sessions/${activeNumberSessionId}/close`, { method: "POST" }, ownerCookie);
+  expectStatus(activeNumberClosed.response, 200, activeNumberClosed.body);
+  await setTables(19);
+  assert.equal((await prisma.diningTable.findUniqueOrThrow({ where: { id: table20.id } })).isActive, false);
+
+  const reductionBeforeOpen = await api("/api/staff/table-sessions", {
+    method: "POST",
+    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "test" } }),
+  }, ownerCookie);
+  expectStatus(reductionBeforeOpen.response, 404, reductionBeforeOpen.body);
+  assert.equal(await prisma.activeTableSession.findUnique({ where: { tableId: table20.id } }), null, "a reduced table must not get an active session");
+
+  const concurrentOpen = () => api("/api/staff/table-sessions", {
+    method: "POST",
+    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "concurrency-test" } }),
+  }, ownerCookie);
+  const concurrentReduce = () => api("/api/staff/tables", {
+    method: "POST",
+    body: JSON.stringify({ count: 19 }),
+  }, ownerCookie);
+
+  for (let round = 1; round <= 12; round += 1) {
+    await setTables(20);
+    const [openResult, reduceResult] = await Promise.all([concurrentOpen(), concurrentReduce()]);
+    const outcome = `${openResult.response.status}/${reduceResult.response.status}`;
+    assert(
+      (openResult.response.status === 201 && reduceResult.response.status === 409) ||
+        (openResult.response.status === 404 && reduceResult.response.status === 200),
+      `concurrency round ${round} must serialize as open/reduce 201/409 or 404/200, got ${outcome}: ${JSON.stringify({ open: openResult.body, reduce: reduceResult.body })}`,
+    );
+    assert.notDeepEqual([openResult.response.status, reduceResult.response.status], [201, 200], `concurrency round ${round} must not let both requests succeed`);
+
+    if (openResult.response.status === 201) {
+      const sessionId = String(((openResult.body as Json).session as Json).id);
+      const closed = await api(`/api/staff/table-sessions/${sessionId}/close`, { method: "POST" }, ownerCookie);
+      expectStatus(closed.response, 200, closed.body);
+    }
+    await assertNoInactiveOccupiedTables(`concurrency round ${round}`);
+    await setTables(20);
+    await assertNoInactiveOccupiedTables(`concurrency round ${round} after restore`);
+  }
+
   const throttleIp = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const failed = await api("/api/auth/login", { method: "POST", headers: { "x-forwarded-for": throttleIp }, body: JSON.stringify({ username: owner.username, password: "wrong-password" }) });
@@ -86,6 +202,8 @@ async function main() {
     body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, guestCount: 1, payment: { amount: 299, method: "test" } }),
   }, restrictedCookie);
   expectStatus(forbidden.response, 403, forbidden.body);
+  const settingsForbidden = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count: 20 }) }, restrictedCookie);
+  expectStatus(settingsForbidden.response, 403, settingsForbidden.body);
 
   const categoryResponse = await api("/api/staff/menu/categories", {
     method: "POST",
@@ -185,7 +303,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     checks: [
-      "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
+      "table count increase/idempotency", "open-before-reduce conflict", "reduce-before-open rejection", "concurrent open/reduce serialization (12 rounds)", "inactive-table invariant", "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
       "pre-start rejection", "customer order and staff queue", "order status workflow", "idempotent retry",
       "expiry behavior", "post-expiry existing order handling", "concurrent idempotency", "timer stability", "QR revocation on close",
     ],

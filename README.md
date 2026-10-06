@@ -45,6 +45,8 @@ npm run test:integration
 
 `test:integration` เป็น HTTP integration test ที่ยิง Route Handlers ผ่านเซิร์ฟเวอร์ Next.js และตรวจข้อมูลใน MySQL จริง ไม่ใช่ browser E2E; repository นี้ยังไม่มี browser E2E suite
 
+สำหรับ integration test ให้ใช้ฐานข้อมูลแยกจาก local/runtime database: copy `.env.test.example` เป็น `.env.test`, ตั้งค่า secrets แล้วรัน `docker compose --env-file .env.test -f docker-compose.test.yml up -d mysql-test`, โดย `DATABASE_URL` และ `TEST_DATABASE_URL` ต้องเหมือนกัน จากนั้นรัน `env $(grep -v '^#' .env.test | xargs) npm run db:migrate:deploy` และ `env $(grep -v '^#' .env.test | xargs) npm run db:seed`. สร้าง build/server ด้วย environment จาก `.env.test`, เปิด server ที่ `http://127.0.0.1:3001` และรัน `npm run test:integration:testdb`; script จะปฏิเสธฐานข้อมูลหรือ `TEST_BASE_URL` ที่ไม่ใช่ local.
+
 ## Security และข้อจำกัดที่ต้องรู้
 
 - login มี DB-backed throttle: ผิด 5 ครั้งใน 15 นาทีต่อ username/IP จะ lock 15 นาทีและตอบ 429

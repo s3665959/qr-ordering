@@ -17,7 +17,8 @@
     "db:seed": "prisma db seed",
     "staff:create-owner": "tsx scripts/create-owner.ts",
     "test:domain": "tsx scripts/check-domain.ts",
-    "test:integration": "tsx scripts/integration-flow.ts"
+    "test:integration": "tsx scripts/integration-flow.ts",
+    "test:integration:testdb": "node --env-file=.env.test ./node_modules/tsx/dist/cli.mjs scripts/integration-flow.ts"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "7.10.0",
