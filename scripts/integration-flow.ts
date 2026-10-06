@@ -335,7 +335,16 @@ async function main() {
   await prisma.order.update({ where: { id: legacyWithoutCompletionTime }, data: { orderedAt: beforeBusinessDay, servedAt: null } });
   const oldHistory = await api("/api/staff/orders/history?businessDay=2026-10-07&status=SERVED&page=1&pageSize=50", {}, ownerCookie);
   expectStatus(oldHistory.response, 200, oldHistory.body);
-  assert((oldHistory.body.orders as Json[]).some((order) => String(order.id) === legacyWithoutCompletionTime && order.servedAt === null), "old served records without completion time must remain viewable without guessed time");
+  assert(!(oldHistory.body.orders as Json[]).some((order) => String(order.id) === legacyWithoutCompletionTime), "normal served history must exclude unknown completion times");
+  const unknownHistory = await api("/api/staff/orders/history?unknownCompletionTime=1&status=SERVED&page=1&pageSize=50", {}, ownerCookie);
+  expectStatus(unknownHistory.response, 200, unknownHistory.body);
+  assert((unknownHistory.body.orders as Json[]).some((order) => String(order.id) === legacyWithoutCompletionTime && order.servedAt === null), "unknown served history mode must show null servedAt without guessing");
+  const unknownCancelledHistory = await api("/api/staff/orders/history?unknownCompletionTime=1&status=CANCELLED&page=1&pageSize=50", {}, ownerCookie);
+  expectStatus(unknownCancelledHistory.response, 200, unknownCancelledHistory.body);
+  await prisma.order.update({ where: { id: newOrderId }, data: { cancelledAt: null } });
+  const unknownCancelledHistoryAfterLegacyFixture = await api("/api/staff/orders/history?unknownCompletionTime=1&status=CANCELLED&page=1&pageSize=50", {}, ownerCookie);
+  expectStatus(unknownCancelledHistoryAfterLegacyFixture.response, 200, unknownCancelledHistoryAfterLegacyFixture.body);
+  assert((unknownCancelledHistoryAfterLegacyFixture.body.orders as Json[]).some((order) => String(order.id) === newOrderId && order.cancelledAt === null), "unknown cancelled history mode must show null cancelledAt without guessing");
   const customerAfterServed = await api(`/api/customer/sessions/${beefSession.qrToken}`);
   expectStatus(customerAfterServed.response, 200, customerAfterServed.body);
   assert.equal(String(((customerAfterServed.body.orders as Json[]).find((order) => String(order.id) === orderId) as Json).status), "SERVED", "customer polling must show the latest order status");

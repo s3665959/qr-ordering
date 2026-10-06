@@ -32,6 +32,7 @@ Deployment precheck: กำหนด `NEXT_PUBLIC_APP_URL=https://qr-order.81154
 - `npm run test:integration:testdb` (ผ่านครบ รวม order/concurrency เดิม)
 - `npm run build` (ผ่าน รวม `/orders/history`)
 - Authenticated Playwright + Chrome check บน test DB ที่ `390x844` และ `1440x900`; history URL filters/pagination, Expand ระหว่าง polling และ mobile layout ผ่าน พร้อมภาพใน `docs/screenshots/`
+- Authenticated Playwright ตรวจทั้งโหมดวันทำการและ `unknownCompletionTime=1` บน desktop/mobile ผ่าน
 
 ต้องรันด้วย MySQL จริงและ Next.js server:
 
