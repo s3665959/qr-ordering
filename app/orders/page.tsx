@@ -6,7 +6,7 @@ import styles from "./page.module.css";
 import { cancellableOrderStatuses, nextOrderStatus, orderActionLabels, orderQueueStatuses, orderStatusLabels } from "@/lib/order-status";
 
 type OrderItem = { itemNameSnapshot: string; servingUnitSnapshot: string; quantity: number };
-type Order = { id: string; orderNumber: string; status: string; orderedAt: string; items: OrderItem[]; tableSession: { table: { displayName: string } } };
+type Order = { id: string; orderNumber: string; status: string; orderedAt: string; servedAt: string | null; items: OrderItem[]; tableSession: { table: { displayName: string } } };
 type Staff = { displayName: string } | null;
 type QueueStatus = (typeof orderQueueStatuses)[number];
 
@@ -37,20 +37,22 @@ export default function OrdersPage() {
   const [message, setMessage] = useState("");
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [servedTotal, setServedTotal] = useState(0);
+  const [expandedServedIds, setExpandedServedIds] = useState<Set<string>>(new Set());
   const knownIds = useRef<Set<string> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const me = await api<{ staff: Staff }>("/api/auth/me");
       setStaff(me.staff);
-      const result = await api<{ orders: Order[] }>("/api/staff/orders");
+      const result = await api<{ orders: Order[]; servedTotal: number }>("/api/staff/orders");
       const incoming = result.orders.filter((order) => order.status === "NEW");
       const previousIds = knownIds.current;
       if (previousIds && incoming.some((order) => !previousIds.has(order.id))) {
         setMessage("มีออเดอร์ใหม่เข้ามา"); if (soundEnabled) beep();
       }
       knownIds.current = new Set(result.orders.map((order) => order.id));
-      setOrders(result.orders); setError("");
+      setOrders(result.orders); setServedTotal(result.servedTotal); setError("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "โหลดคิวออเดอร์ไม่สำเร็จ"); }
     finally { setLoading(false); }
   }, [soundEnabled]);
@@ -77,10 +79,10 @@ export default function OrdersPage() {
 
   if (loading) return <main className={styles.center}>กำลังโหลดคิวออเดอร์…</main>;
   if (!staff) return <main className={styles.center}><div><h1>กรุณาเข้าสู่ระบบ</h1><Link href="/login">ไปหน้าเข้าสู่ระบบ</Link></div></main>;
-  return <main className={styles.shell}><header className={styles.header}><div><Link className={styles.back} href="/">← กลับหน้าผังโต๊ะ</Link><span className={styles.eyebrow}>SHABU CONTROL / ORDER QUEUE</span><h1>คิวออเดอร์</h1><p>ติดตามออเดอร์จาก QR และเปลี่ยนสถานะตามการทำงานของครัว</p></div><div className={styles.headerActions}><button className={styles.soundButton} onClick={() => { setSoundEnabled((value) => !value); beep(); }}>{soundEnabled ? "🔔 เปิดเสียงแล้ว" : "🔕 เปิดเสียงแจ้งเตือน"}</button><Link className={styles.secondaryButton} href="/">ผังโต๊ะ</Link></div></header>
+  return <main className={styles.shell}><header className={styles.header}><div><Link className={styles.back} href="/">← กลับหน้าผังโต๊ะ</Link><span className={styles.eyebrow}>SHABU CONTROL / ORDER QUEUE</span><h1>คิวออเดอร์</h1><p>ติดตามออเดอร์จาก QR และเปลี่ยนสถานะตามการทำงานของครัว</p></div><div className={styles.headerActions}><Link className={styles.secondaryButton} href="/orders/history">ประวัติออเดอร์</Link><button className={styles.soundButton} onClick={() => { setSoundEnabled((value) => !value); beep(); }}>{soundEnabled ? "🔔 เปิดเสียงแล้ว" : "🔕 เปิดเสียงแจ้งเตือน"}</button><Link className={styles.secondaryButton} href="/">ผังโต๊ะ</Link></div></header>
     {(error || message) && <div className={error ? styles.error : styles.success}>{error || message}</div>}
     <div className={styles.polling}><span />อัปเดตอัตโนมัติทุก 3 วินาที · {orders.filter((order) => ["NEW", "ACCEPTED", "PREPARING", "DELIVERING"].includes(order.status)).length} ออเดอร์ที่ยังไม่เสิร์ฟ</div>
-    <div className={styles.board}>{orderQueueStatuses.map((status) => { const columnOrders = orders.filter((order) => queueStatusFor(order.status) === status); return <section className={styles.column} key={status}><div className={styles.columnHeader}><h2>{orderStatusLabels[status]}</h2><b>{columnOrders.length}</b></div>{columnOrders.map((order) => { const nextStatus = nextOrderStatus[order.status]; const pending = pendingIds.has(order.id); const isLegacy = legacyOrderStatuses.includes(order.status as (typeof legacyOrderStatuses)[number]); return <article className={`${styles.card} ${order.status === "NEW" ? styles.newCard : ""}`} key={order.id}><div className={styles.tableBanner}>{order.tableSession.table.displayName}</div><div className={styles.cardMeta}><strong>{order.orderNumber}</strong>{isLegacy && <span className={styles.legacyBadge}>{orderStatusLabels[order.status as keyof typeof orderStatusLabels]}</span>}<time>{new Date(order.orderedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}</time></div><ul>{order.items.map((item, index) => <li key={`${item.itemNameSnapshot}-${index}`}><b>{item.quantity}×</b> {item.itemNameSnapshot}<small>{item.servingUnitSnapshot}</small></li>)}</ul><div className={styles.cardActions}>{nextStatus && <button className={styles.primaryButton} disabled={pending} onClick={() => void changeStatus(order, nextStatus)}>{pending ? "กำลังบันทึก…" : orderActionLabels[nextStatus]}</button>}{cancellableOrderStatuses.includes(order.status as typeof cancellableOrderStatuses[number]) && <button className={styles.cancelButton} disabled={pending} onClick={() => void cancel(order)}>ยกเลิก</button>}</div></article>; })}</section>; })}</div>
-    <footer className={styles.footer}>ผู้ปฏิบัติงาน: {staff.displayName} · ออเดอร์ที่เสิร์ฟแล้วจะแสดงไว้เพื่ออ้างอิง</footer>
+    <div className={styles.board}>{orderQueueStatuses.map((status) => { const columnOrders = orders.filter((order) => queueStatusFor(order.status) === status); return <section className={styles.column} key={status}><div className={styles.columnHeader}><h2>{status === "SERVED" ? `เสิร์ฟแล้ว (${servedTotal})` : orderStatusLabels[status]}</h2><b>{columnOrders.length}</b></div>{columnOrders.map((order) => { const nextStatus = nextOrderStatus[order.status]; const pending = pendingIds.has(order.id); const isLegacy = legacyOrderStatuses.includes(order.status as (typeof legacyOrderStatuses)[number]); const served = order.status === "SERVED"; const expanded = expandedServedIds.has(order.id); return <article className={`${styles.card} ${order.status === "NEW" ? styles.newCard : ""}`} key={order.id}><div className={styles.tableBanner}>{order.tableSession.table.displayName}</div><div className={styles.cardMeta}><strong>{served ? (expanded ? order.orderNumber : "เสิร์ฟแล้ว") : order.orderNumber}</strong>{isLegacy && <span className={styles.legacyBadge}>{orderStatusLabels[order.status as keyof typeof orderStatusLabels]}</span>}<time>{new Date(served && order.servedAt ? order.servedAt : order.orderedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}</time></div>{(!served || expanded) && <ul>{order.items.map((item, index) => <li key={`${item.itemNameSnapshot}-${index}`}><b>{item.quantity}×</b> {item.itemNameSnapshot}<small>{item.servingUnitSnapshot}</small></li>)}</ul>}{served ? <button className={styles.expandButton} onClick={() => setExpandedServedIds((current) => { const next = new Set(current); if (next.has(order.id)) next.delete(order.id); else next.add(order.id); return next; })}>{expanded ? "ย่อ" : "Expand"}</button> : <div className={styles.cardActions}>{nextStatus && <button className={styles.primaryButton} disabled={pending} onClick={() => void changeStatus(order, nextStatus)}>{pending ? "กำลังบันทึก…" : orderActionLabels[nextStatus]}</button>}{cancellableOrderStatuses.includes(order.status as typeof cancellableOrderStatuses[number]) && <button className={styles.cancelButton} disabled={pending} onClick={() => void cancel(order)}>ยกเลิก</button>}</div>}</article>; })}{status === "SERVED" && <Link className={styles.viewAll} href="/orders/history?status=SERVED">ดูทั้งหมด</Link>}</section>; })}</div>
+    <footer className={styles.footer}>ผู้ปฏิบัติงาน: {staff.displayName} · ออเดอร์ที่เสิร์ฟแล้วจะแสดงไว้เพื่ออ้างอิง · <Link className={styles.viewAll} href="/orders/history">ประวัติออเดอร์</Link></footer>
   </main>;
 }
