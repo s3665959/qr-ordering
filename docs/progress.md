@@ -11,6 +11,7 @@ Deployment precheck: กำหนด `NEXT_PUBLIC_APP_URL=https://qr-order.81154
 - [x] เวลาใน business events ใช้ MySQL `CURRENT_TIMESTAMP(3)` ในจุดสำคัญ
 - [x] โต๊ะ, payment, session lifecycle, timer จาก `serverNow`, QR rotation/revocation และ idempotent customer orders
 - [x] Menu CRUD และ order queue
+- [x] Simplified order queue: `NEW → ACCEPTED → SERVED`, with legacy `PREPARING`/`DELIVERING` completion support
 - [x] Compose MySQL bind ที่ loopback เป็นค่าเริ่มต้นโดยไม่ลบ volume
 - [x] Error mapping สำหรับ unique conflict ที่รู้จัก พร้อม fallback สำหรับ unknown constraint
 - [x] Image storage เป็น URL/path key เท่านั้น; ยังไม่มี binary upload หรือ object-storage provider
