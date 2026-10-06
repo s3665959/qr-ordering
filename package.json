@@ -40,5 +40,10 @@
     "prisma": "7.10.0",
     "tsx": "4.20.6",
     "typescript": "^5"
+  },
+  "overrides": {
+    "mariadb": "3.4.7",
+    "mysql2": "3.23.1",
+    "deepmerge-ts": "8.0.1"
   }
 }
