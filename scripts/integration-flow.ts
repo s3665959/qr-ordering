@@ -105,6 +105,15 @@ async function main() {
     expectStatus(result.response, 200, result.body);
     assert.equal((result.body as Json).count, count);
   };
+  const assertNoInactiveOccupiedTables = async (label: string) => {
+    const violations = await prisma.$queryRaw<Array<{ id: string; tableNumber: string }>>`
+      SELECT dining_tables.id, dining_tables.table_number AS tableNumber
+      FROM dining_tables
+      INNER JOIN active_table_sessions ON active_table_sessions.table_id = dining_tables.id
+      WHERE dining_tables.store_id = ${store.id} AND dining_tables.is_active = false
+    `;
+    assert.equal(violations.length, 0, `${label}: inactive tables must not have active sessions: ${JSON.stringify(violations)}`);
+  };
   await setTables(20);
   const twentyTables = await prisma.diningTable.findMany({ where: { storeId: store.id, tableNumber: { in: Array.from({ length: 20 }, (_, index) => String(index + 1)) } } });
   assert.equal(twentyTables.length, 20, "setting 20 tables must create tables 1-20");
@@ -145,6 +154,36 @@ async function main() {
   }, ownerCookie);
   expectStatus(reductionBeforeOpen.response, 404, reductionBeforeOpen.body);
   assert.equal(await prisma.activeTableSession.findUnique({ where: { tableId: table20.id } }), null, "a reduced table must not get an active session");
+
+  const concurrentOpen = () => api("/api/staff/table-sessions", {
+    method: "POST",
+    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "concurrency-test" } }),
+  }, ownerCookie);
+  const concurrentReduce = () => api("/api/staff/tables", {
+    method: "POST",
+    body: JSON.stringify({ count: 19 }),
+  }, ownerCookie);
+
+  for (let round = 1; round <= 12; round += 1) {
+    await setTables(20);
+    const [openResult, reduceResult] = await Promise.all([concurrentOpen(), concurrentReduce()]);
+    const outcome = `${openResult.response.status}/${reduceResult.response.status}`;
+    assert(
+      (openResult.response.status === 201 && reduceResult.response.status === 409) ||
+        (openResult.response.status === 404 && reduceResult.response.status === 200),
+      `concurrency round ${round} must serialize as open/reduce 201/409 or 404/200, got ${outcome}: ${JSON.stringify({ open: openResult.body, reduce: reduceResult.body })}`,
+    );
+    assert.notDeepEqual([openResult.response.status, reduceResult.response.status], [201, 200], `concurrency round ${round} must not let both requests succeed`);
+
+    if (openResult.response.status === 201) {
+      const sessionId = String(((openResult.body as Json).session as Json).id);
+      const closed = await api(`/api/staff/table-sessions/${sessionId}/close`, { method: "POST" }, ownerCookie);
+      expectStatus(closed.response, 200, closed.body);
+    }
+    await assertNoInactiveOccupiedTables(`concurrency round ${round}`);
+    await setTables(20);
+    await assertNoInactiveOccupiedTables(`concurrency round ${round} after restore`);
+  }
 
   const throttleIp = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -264,7 +303,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     checks: [
-      "table count increase/idempotency", "open-before-reduce conflict", "reduce-before-open rejection", "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
+      "table count increase/idempotency", "open-before-reduce conflict", "reduce-before-open rejection", "concurrent open/reduce serialization (12 rounds)", "inactive-table invariant", "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
       "pre-start rejection", "customer order and staff queue", "order status workflow", "idempotent retry",
       "expiry behavior", "post-expiry existing order handling", "concurrent idempotency", "timer stability", "QR revocation on close",
     ],
