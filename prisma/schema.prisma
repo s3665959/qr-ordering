@@ -1,0 +1,427 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum StaffUserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TableSessionLifecycleStatus {
+  PAID_PENDING_START
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  CONFIRMED
+  VOIDED
+  REFUNDED
+}
+
+enum OrderStatus {
+  NEW
+  ACCEPTED
+  PREPARING
+  DELIVERING
+  SERVED
+  CANCELLED
+}
+
+enum AlertType {
+  ENDING_SOON
+}
+
+model Store {
+  id                     String          @id @default(uuid()) @db.Char(36)
+  code                   String          @unique @db.VarChar(50)
+  name                   String          @db.VarChar(191)
+  timezone               String          @default("Asia/Bangkok") @db.VarChar(64)
+  defaultDurationMinutes Int             @default(120) @map("default_duration_minutes")
+  alertBeforeMinutes     Int             @default(15) @map("alert_before_minutes")
+  isActive               Boolean         @default(true) @map("is_active")
+  createdAt              DateTime        @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt              DateTime        @updatedAt @map("updated_at") @db.DateTime(3)
+  staffUsers             StaffUser[]
+  diningTables           DiningTable[]
+  buffetPackages         BuffetPackage[]
+  menuCategories         MenuCategory[]
+  tableSessions          TableSession[]
+
+  @@map("stores")
+}
+
+model StaffUser {
+  id                     String                  @id @default(uuid()) @db.Char(36)
+  storeId                String                  @map("store_id") @db.Char(36)
+  username               String                  @db.VarChar(100)
+  passwordHash           String                  @map("password_hash") @db.VarChar(255)
+  displayName            String                  @map("display_name") @db.VarChar(191)
+  status                 StaffUserStatus         @default(ACTIVE)
+  lastLoginAt            DateTime?               @map("last_login_at") @db.DateTime(3)
+  createdAt              DateTime                @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt              DateTime                @updatedAt @map("updated_at") @db.DateTime(3)
+  store                  Store                   @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  roles                  StaffUserRole[]
+  authSessions           StaffAuthSession[]
+  openedTableSessions    TableSession[]          @relation("TableSessionOpenedBy")
+  startedTableSessions   TableSession[]          @relation("TableSessionStartedBy")
+  closedTableSessions    TableSession[]          @relation("TableSessionClosedBy")
+  cancelledTableSessions TableSession[]          @relation("TableSessionCancelledBy")
+  receivedPayments       Payment[]
+  issuedQrTokens         QrAccessToken[]         @relation("QrTokenIssuedBy")
+  revokedQrTokens        QrAccessToken[]         @relation("QrTokenRevokedBy")
+  approvedExtensions     TableSessionExtension[]
+  tableSessionEvents     TableSessionEvent[]
+  acknowledgedAlerts     StaffAlert[]
+  changedOrderStatuses   OrderStatusEvent[]
+
+  @@unique([storeId, username])
+  @@index([storeId, status])
+  @@map("staff_users")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Char(36)
+  code        String           @unique @db.VarChar(80)
+  name        String           @db.VarChar(191)
+  description String?          @db.VarChar(500)
+  isSystem    Boolean          @default(false) @map("is_system")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.DateTime(3)
+  users       StaffUserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Char(36)
+  code        String           @unique @db.VarChar(100)
+  name        String           @db.VarChar(191)
+  description String?          @db.VarChar(500)
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model StaffUserRole {
+  staffUserId String    @map("staff_user_id") @db.Char(36)
+  roleId      String    @map("role_id") @db.Char(36)
+  assignedAt  DateTime  @default(now()) @map("assigned_at") @db.DateTime(3)
+  staffUser   StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([staffUserId, roleId])
+  @@map("staff_user_roles")
+}
+
+model RolePermission {
+  roleId       String     @map("role_id") @db.Char(36)
+  permissionId String     @map("permission_id") @db.Char(36)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model StaffAuthSession {
+  id               String    @id @default(uuid()) @db.Char(36)
+  staffUserId      String    @map("staff_user_id") @db.Char(36)
+  sessionTokenHash String    @unique @map("session_token_hash") @db.Char(64)
+  expiresAt        DateTime  @map("expires_at") @db.DateTime(3)
+  revokedAt        DateTime? @map("revoked_at") @db.DateTime(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  staffUser        StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+
+  @@index([staffUserId, expiresAt])
+  @@map("staff_auth_sessions")
+}
+
+model DiningTable {
+  id            String              @id @default(uuid()) @db.Char(36)
+  storeId       String              @map("store_id") @db.Char(36)
+  tableNumber   String              @map("table_number") @db.VarChar(50)
+  displayName   String              @map("display_name") @db.VarChar(191)
+  capacity      Int?
+  sortOrder     Int                 @default(0) @map("sort_order")
+  isActive      Boolean             @default(true) @map("is_active")
+  createdAt     DateTime            @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt     DateTime            @updatedAt @map("updated_at") @db.DateTime(3)
+  store         Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  sessions      TableSession[]
+  activeSession ActiveTableSession?
+
+  @@unique([storeId, tableNumber])
+  @@index([storeId, isActive, sortOrder])
+  @@map("dining_tables")
+}
+
+model BuffetPackage {
+  id                 String         @id @default(uuid()) @db.Char(36)
+  storeId            String         @map("store_id") @db.Char(36)
+  code               String         @db.VarChar(50)
+  name               String         @db.VarChar(191)
+  pricePerPerson     Decimal        @map("price_per_person") @db.Decimal(10, 2)
+  durationMinutes    Int            @default(120) @map("duration_minutes")
+  allowsBeefOrdering Boolean        @default(false) @map("allows_beef_ordering")
+  sortOrder          Int            @default(0) @map("sort_order")
+  isActive           Boolean        @default(true) @map("is_active")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.DateTime(3)
+  store              Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  tableSessions      TableSession[]
+
+  @@unique([storeId, code])
+  @@index([storeId, isActive, sortOrder])
+  @@map("buffet_packages")
+}
+
+model TableSession {
+  id                         String                      @id @default(uuid()) @db.Char(36)
+  storeId                    String                      @map("store_id") @db.Char(36)
+  tableId                    String                      @map("table_id") @db.Char(36)
+  packageId                  String                      @map("package_id") @db.Char(36)
+  guestCount                 Int                         @map("guest_count")
+  packageNameSnapshot        String                      @map("package_name_snapshot") @db.VarChar(191)
+  pricePerPersonSnapshot     Decimal                     @map("price_per_person_snapshot") @db.Decimal(10, 2)
+  durationMinutesSnapshot    Int                         @map("duration_minutes_snapshot")
+  allowsBeefOrderingSnapshot Boolean                     @map("allows_beef_ordering_snapshot")
+  totalAmount                Decimal                     @map("total_amount") @db.Decimal(10, 2)
+  lifecycleStatus            TableSessionLifecycleStatus @map("lifecycle_status")
+  openedAt                   DateTime                    @default(now()) @map("opened_at") @db.DateTime(3)
+  startedAt                  DateTime?                   @map("started_at") @db.DateTime(3)
+  endsAt                     DateTime?                   @map("ends_at") @db.DateTime(3)
+  closedAt                   DateTime?                   @map("closed_at") @db.DateTime(3)
+  cancelledAt                DateTime?                   @map("cancelled_at") @db.DateTime(3)
+  openedById                 String                      @map("opened_by_id") @db.Char(36)
+  startedById                String?                     @map("started_by_id") @db.Char(36)
+  closedById                 String?                     @map("closed_by_id") @db.Char(36)
+  cancelledById              String?                     @map("cancelled_by_id") @db.Char(36)
+  createdAt                  DateTime                    @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt                  DateTime                    @updatedAt @map("updated_at") @db.DateTime(3)
+  store                      Store                       @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  table                      DiningTable                 @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  package                    BuffetPackage               @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  openedBy                   StaffUser                   @relation("TableSessionOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
+  startedBy                  StaffUser?                  @relation("TableSessionStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  closedBy                   StaffUser?                  @relation("TableSessionClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  cancelledBy                StaffUser?                  @relation("TableSessionCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  activeTablePointer         ActiveTableSession?
+  payments                   Payment[]
+  qrTokens                   QrAccessToken[]
+  activeQrToken              ActiveQrToken?
+  extensions                 TableSessionExtension[]
+  events                     TableSessionEvent[]
+  alerts                     StaffAlert[]
+  orders                     Order[]
+
+  @@index([storeId, lifecycleStatus])
+  @@index([tableId, openedAt])
+  @@index([lifecycleStatus, endsAt])
+  @@map("table_sessions")
+}
+
+model ActiveTableSession {
+  tableId        String       @id @map("table_id") @db.Char(36)
+  tableSessionId String       @unique @map("table_session_id") @db.Char(36)
+  assignedAt     DateTime     @default(now()) @map("assigned_at") @db.DateTime(3)
+  table          DiningTable  @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  tableSession   TableSession @relation(fields: [tableSessionId], references: [id], onDelete: Cascade)
+
+  @@map("active_table_sessions")
+}
+
+model Payment {
+  id             String        @id @default(uuid()) @db.Char(36)
+  tableSessionId String        @map("table_session_id") @db.Char(36)
+  amount         Decimal       @db.Decimal(10, 2)
+  method         String        @db.VarChar(50)
+  status         PaymentStatus @default(CONFIRMED)
+  reference      String?       @db.VarChar(191)
+  notes          String?       @db.VarChar(500)
+  paidAt         DateTime      @map("paid_at") @db.DateTime(3)
+  receivedById   String        @map("received_by_id") @db.Char(36)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+  tableSession   TableSession  @relation(fields: [tableSessionId], references: [id], onDelete: Restrict)
+  receivedBy     StaffUser     @relation(fields: [receivedById], references: [id], onDelete: Restrict)
+
+  @@index([tableSessionId, status])
+  @@map("payments")
+}
+
+model QrAccessToken {
+  id                String         @id @default(uuid()) @db.Char(36)
+  tableSessionId    String         @map("table_session_id") @db.Char(36)
+  tokenHash         String         @unique @map("token_hash") @db.Char(64)
+  issuedAt          DateTime       @default(now()) @map("issued_at") @db.DateTime(3)
+  issuedById        String         @map("issued_by_id") @db.Char(36)
+  revokedAt         DateTime?      @map("revoked_at") @db.DateTime(3)
+  revokedById       String?        @map("revoked_by_id") @db.Char(36)
+  revocationReason  String?        @map("revocation_reason") @db.VarChar(191)
+  replacedByTokenId String?        @unique @map("replaced_by_token_id") @db.Char(36)
+  lastUsedAt        DateTime?      @map("last_used_at") @db.DateTime(3)
+  tableSession      TableSession   @relation(fields: [tableSessionId], references: [id], onDelete: Restrict)
+  issuedBy          StaffUser      @relation("QrTokenIssuedBy", fields: [issuedById], references: [id], onDelete: Restrict)
+  revokedBy         StaffUser?     @relation("QrTokenRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+  replacedByToken   QrAccessToken? @relation("QrTokenReplacement", fields: [replacedByTokenId], references: [id], onDelete: Restrict)
+  replacesToken     QrAccessToken? @relation("QrTokenReplacement")
+  activePointer     ActiveQrToken?
+
+  @@index([tableSessionId, issuedAt])
+  @@map("qr_access_tokens")
+}
+
+model ActiveQrToken {
+  tableSessionId String        @id @map("table_session_id") @db.Char(36)
+  qrTokenId      String        @unique @map("qr_token_id") @db.Char(36)
+  assignedAt     DateTime      @default(now()) @map("assigned_at") @db.DateTime(3)
+  tableSession   TableSession  @relation(fields: [tableSessionId], references: [id], onDelete: Cascade)
+  qrToken        QrAccessToken @relation(fields: [qrTokenId], references: [id], onDelete: Cascade)
+
+  @@map("active_qr_tokens")
+}
+
+model TableSessionExtension {
+  id             String       @id @default(uuid()) @db.Char(36)
+  tableSessionId String       @map("table_session_id") @db.Char(36)
+  oldEndsAt      DateTime     @map("old_ends_at") @db.DateTime(3)
+  newEndsAt      DateTime     @map("new_ends_at") @db.DateTime(3)
+  minutesAdded   Int          @map("minutes_added")
+  reason         String       @db.VarChar(500)
+  approvedById   String       @map("approved_by_id") @db.Char(36)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  tableSession   TableSession @relation(fields: [tableSessionId], references: [id], onDelete: Restrict)
+  approvedBy     StaffUser    @relation(fields: [approvedById], references: [id], onDelete: Restrict)
+
+  @@index([tableSessionId, createdAt])
+  @@map("table_session_extensions")
+}
+
+model TableSessionEvent {
+  id             String       @id @default(uuid()) @db.Char(36)
+  tableSessionId String       @map("table_session_id") @db.Char(36)
+  eventType      String       @map("event_type") @db.VarChar(80)
+  actorStaffId   String?      @map("actor_staff_id") @db.Char(36)
+  metadata       Json?
+  createdAt      DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  tableSession   TableSession @relation(fields: [tableSessionId], references: [id], onDelete: Restrict)
+  actorStaff     StaffUser?   @relation(fields: [actorStaffId], references: [id], onDelete: Restrict)
+
+  @@index([tableSessionId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("table_session_events")
+}
+
+model StaffAlert {
+  id               String       @id @default(uuid()) @db.Char(36)
+  tableSessionId   String       @map("table_session_id") @db.Char(36)
+  alertType        AlertType    @map("alert_type")
+  triggeredAt      DateTime     @map("triggered_at") @db.DateTime(3)
+  acknowledgedAt   DateTime?    @map("acknowledged_at") @db.DateTime(3)
+  acknowledgedById String?      @map("acknowledged_by_id") @db.Char(36)
+  tableSession     TableSession @relation(fields: [tableSessionId], references: [id], onDelete: Restrict)
+  acknowledgedBy   StaffUser?   @relation(fields: [acknowledgedById], references: [id], onDelete: Restrict)
+
+  @@unique([tableSessionId, alertType, triggeredAt])
+  @@index([acknowledgedAt, triggeredAt])
+  @@map("staff_alerts")
+}
+
+model MenuCategory {
+  id          String     @id @default(uuid()) @db.Char(36)
+  storeId     String     @map("store_id") @db.Char(36)
+  name        String     @db.VarChar(191)
+  description String?    @db.VarChar(500)
+  sortOrder   Int        @default(0) @map("sort_order")
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.DateTime(3)
+  store       Store      @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  items       MenuItem[]
+
+  @@index([storeId, isActive, sortOrder])
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id          String       @id @default(uuid()) @db.Char(36)
+  categoryId  String       @map("category_id") @db.Char(36)
+  name        String       @db.VarChar(191)
+  description String?      @db.VarChar(1000)
+  servingUnit String       @map("serving_unit") @db.VarChar(100)
+  imageKey    String?      @map("image_key") @db.VarChar(500)
+  sortOrder   Int          @default(0) @map("sort_order")
+  isActive    Boolean      @default(true) @map("is_active")
+  isAvailable Boolean      @default(true) @map("is_available")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.DateTime(3)
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  orderItems  OrderItem[]
+
+  @@index([categoryId, isActive, isAvailable, sortOrder])
+  @@map("menu_items")
+}
+
+model Order {
+  id                 String             @id @default(uuid()) @db.Char(36)
+  tableSessionId     String             @map("table_session_id") @db.Char(36)
+  orderNumber        String             @map("order_number") @db.VarChar(50)
+  status             OrderStatus        @default(NEW)
+  idempotencyKey     String             @map("idempotency_key") @db.VarChar(100)
+  requestFingerprint String             @map("request_fingerprint") @db.Char(64)
+  orderedAt          DateTime           @map("ordered_at") @db.DateTime(3)
+  acceptedAt         DateTime?          @map("accepted_at") @db.DateTime(3)
+  servedAt           DateTime?          @map("served_at") @db.DateTime(3)
+  cancelledAt        DateTime?          @map("cancelled_at") @db.DateTime(3)
+  cancellationReason String?            @map("cancellation_reason") @db.VarChar(500)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.DateTime(3)
+  tableSession       TableSession       @relation(fields: [tableSessionId], references: [id], onDelete: Restrict)
+  items              OrderItem[]
+  statusEvents       OrderStatusEvent[]
+
+  @@unique([tableSessionId, idempotencyKey])
+  @@unique([tableSessionId, orderNumber])
+  @@index([status, orderedAt])
+  @@index([tableSessionId, orderedAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                  String   @id @default(uuid()) @db.Char(36)
+  orderId             String   @map("order_id") @db.Char(36)
+  menuItemId          String   @map("menu_item_id") @db.Char(36)
+  itemNameSnapshot    String   @map("item_name_snapshot") @db.VarChar(191)
+  servingUnitSnapshot String   @map("serving_unit_snapshot") @db.VarChar(100)
+  quantity            Int
+  createdAt           DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  order               Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  menuItem            MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([menuItemId])
+  @@map("order_items")
+}
+
+model OrderStatusEvent {
+  id               String       @id @default(uuid()) @db.Char(36)
+  orderId          String       @map("order_id") @db.Char(36)
+  fromStatus       OrderStatus? @map("from_status")
+  toStatus         OrderStatus  @map("to_status")
+  reason           String?      @db.VarChar(500)
+  changedByStaffId String?      @map("changed_by_staff_id") @db.Char(36)
+  createdAt        DateTime     @default(now()) @map("created_at") @db.DateTime(3)
+  order            Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  changedByStaff   StaffUser?   @relation(fields: [changedByStaffId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, createdAt])
+  @@map("order_status_events")
+}
