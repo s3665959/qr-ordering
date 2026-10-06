@@ -69,6 +69,15 @@ async function main() {
   const ownerCookie = cookieFrom(ownerLogin.response);
   assert(ownerCookie, "owner session cookie missing");
 
+  const throttleIp = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const failed = await api("/api/auth/login", { method: "POST", headers: { "x-forwarded-for": throttleIp }, body: JSON.stringify({ username: owner.username, password: "wrong-password" }) });
+    expectStatus(failed.response, 401, failed.body);
+  }
+  const locked = await api("/api/auth/login", { method: "POST", headers: { "x-forwarded-for": throttleIp }, body: JSON.stringify({ username: owner.username, password }) });
+  expectStatus(locked.response, 429, locked.body);
+  await prisma.loginThrottle.deleteMany({ where: { staffUserId: owner.id } });
+
   const restrictedLogin = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: restricted.username, password }) });
   expectStatus(restrictedLogin.response, 200, restrictedLogin.body);
   const restrictedCookie = cookieFrom(restrictedLogin.response);
@@ -176,7 +185,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     checks: [
-      "permission rejection", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
+      "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
       "pre-start rejection", "customer order and staff queue", "order status workflow", "idempotent retry",
       "expiry behavior", "post-expiry existing order handling", "concurrent idempotency", "timer stability", "QR revocation on close",
     ],

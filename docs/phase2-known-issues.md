@@ -1,11 +1,15 @@
-# เฟส 2: ข้อสังเกตที่บันทึกไว้ก่อนเฟส 3
+# เฟส 2: ผลตรวจจาก source ปัจจุบัน
 
-เอกสารนี้เป็นรายการติดตามแยกจากกติกาและ schema ที่อนุมัติแล้ว ไม่ได้เปลี่ยน business rule ในเฟส 3
+ผลจากการตรวจ source และ tests ล่าสุด:
 
-1. ยังไม่มี MySQL ที่เข้าถึงได้ จึงยังไม่ได้ทดสอบ transaction จริง, concurrent table opening, QR rotation หรือ order idempotency กับฐานข้อมูลจริง
-2. การ login ใน schema ปัจจุบันค้นหา username โดยไม่รับ `store_id`; ใช้ได้กับค่าเริ่มต้นหนึ่งสาขา แต่ควรทบทวนก่อนเปิดหลายสาขา
-3. เวลารับออเดอร์ใช้ database time แล้ว แต่ timestamp บางรายการ เช่น login และ order status event ยังสร้างจาก application time ควรทำให้เป็น policy เดียวกันก่อน production
-4. ยังไม่มี rate limit/lockout สำหรับ login และยังไม่มี endpoint bootstrap บัญชีพนักงานชุดแรก เพราะไม่ควรใส่ password จริงใน seed
-5. การ map Prisma unique-conflict เป็น HTTP 409 เป็น fallback ทั่วไป ควรเพิ่ม error mapping เฉพาะ business operation เมื่อมี integration tests
+1. แก้แล้ว: login มี DB-backed throttle ต่อ username/IP ผิด 5 ครั้งใน 15 นาทีจะ lock 15 นาทีและตอบ 429; integration test ตรวจ flow นี้กับ MySQL จริง
+2. แก้แล้ว: login, session expiry และ order-status events ใช้ `CURRENT_TIMESTAMP(3)` จาก MySQL เป็นหลัก
+3. แก้แล้วบางส่วน: `P2002` ที่รู้จัก map เป็น `TABLE_ALREADY_IN_USE` หรือ `IDEMPOTENCY_CONFLICT`; constraint ที่ไม่รู้จักยัง fallback เป็น `CONFLICT`
+4. แก้แล้ว: compose bind MySQL ที่ `127.0.0.1` เป็นค่าเริ่มต้น
+5. จำกัดชัดเจน: image storage ใช้ URL/path key เท่านั้น ยังไม่มี binary upload หรือ S3/R2 implementation
 
-รายการเหล่านี้ไม่ถูกแก้ด้วยการเปลี่ยน lifecycle, QR, permission, idempotency หรือ schema ในเฟส 3
+ข้อจำกัดที่ยังเหลือ:
+
+- การตีความ client IP ต้องพึ่ง reverse proxy ที่เชื่อถือได้และตั้งค่า forwarded headers ถูกต้อง
+- ยังไม่มี browser E2E; `test:integration` คือ HTTP integration test
+- ยังต้องตรวจ migration status, build และ integration บน database/server production-like ก่อน deploy

@@ -18,11 +18,13 @@ export async function getAuthenticatedStaff(): Promise<AuthenticatedStaff | null
   const rawToken = cookieStore.get(STAFF_SESSION_COOKIE)?.value;
   if (!rawToken) return null;
 
+  const nowRows = await prisma.$queryRaw<Array<{ now: Date }>>`SELECT CURRENT_TIMESTAMP(3) AS now`;
+  const now = nowRows[0]?.now ?? new Date();
   const session = await prisma.staffAuthSession.findFirst({
     where: {
       sessionTokenHash: hashStaffSessionToken(rawToken),
       revokedAt: null,
-      expiresAt: { gt: new Date() },
+      expiresAt: { gt: now },
       staffUser: { status: "ACTIVE" },
     },
     include: {

@@ -5,7 +5,8 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1).startsWith("mysql://"),
   AUTH_SESSION_SECRET: z.string().min(32),
   QR_TOKEN_PEPPER: z.string().min(32),
-  IMAGE_STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
+  NEXT_PUBLIC_APP_URL: z.string().url().refine((value) => value.startsWith("https://"), "must use HTTPS"),
+  IMAGE_STORAGE_DRIVER: z.literal("local").default("local"),
   LOCAL_IMAGE_STORAGE_PATH: z.string().min(1).optional(),
   PUBLIC_IMAGE_BASE_URL: z.string().url().optional(),
 });

@@ -10,7 +10,9 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       TZ: Asia/Bangkok
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      # Bind to loopback by default; set MYSQL_BIND_ADDRESS only when a
+      # separately firewalled private network must access MySQL.
+      - "${MYSQL_BIND_ADDRESS:-127.0.0.1}:${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:

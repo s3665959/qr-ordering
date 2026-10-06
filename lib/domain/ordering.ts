@@ -192,7 +192,8 @@ export async function updateOrderStatus(
       throw new HttpError(400, "CANCELLATION_REASON_REQUIRED", "การยกเลิกต้องระบุเหตุผล");
     }
 
-    const now = new Date();
+    const nowRows = await tx.$queryRaw<Array<{ now: Date }>>`SELECT CURRENT_TIMESTAMP(3) AS now`;
+    const now = nowRows[0]?.now ?? new Date();
     const updated = await tx.order.update({
       where: { id: order.id },
       data: {

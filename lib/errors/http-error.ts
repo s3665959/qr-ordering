@@ -25,20 +25,12 @@ export function toErrorResponse(error: unknown): Response {
     );
   }
 
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = String((error as { code?: unknown }).code);
-    if (code === "P2002") {
-      return Response.json(
-        { error: { code: "CONFLICT", message: "ข้อมูลนี้ถูกใช้งานอยู่แล้ว" } },
-        { status: 409, headers: { "Cache-Control": "no-store" } },
-      );
-    }
-    if (code === "P2025") {
-      return Response.json(
-        { error: { code: "NOT_FOUND", message: "ไม่พบข้อมูลที่ต้องการ" } },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
-      );
-    }
+  const databaseError = mapDatabaseError(error);
+  if (databaseError) {
+    return Response.json(
+      { error: databaseError },
+      { status: databaseError.code === "NOT_FOUND" ? 404 : 409, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   console.error("unhandled_api_error", error instanceof Error ? error.message : "unknown");
@@ -48,3 +40,4 @@ export function toErrorResponse(error: unknown): Response {
   );
 }
 import { ConfigurationError } from "@/lib/config/env";
+import { mapDatabaseError } from "@/lib/errors/database-error";

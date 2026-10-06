@@ -2,95 +2,45 @@
 
 อัปเดตล่าสุด: 2026-10-06
 
-## สถานะเฟส
+Deployment precheck: กำหนด `NEXT_PUBLIC_APP_URL=https://qr-order.811544.xyz` ในตัวอย่าง env และ QR client แล้ว แต่ DNS ยังไม่ resolve จาก local และยังตรวจ VPS/Nginx/HTTPS ไม่ได้เพราะ SSH access ถูกปฏิเสธ; ยังไม่มีการแก้ DNS หรือ deploy
 
-- [x] เฟส 1: โครง Next.js/TypeScript, Prisma ORM 7.10.0, MySQL schema, migration, seed, Docker Compose และ `.env.example`
-- [x] เฟส 2: Prisma client, staff authentication, session cookie, RBAC/permissions, business rules, QR token rotation, idempotency และ Route Handlers หลัก
-- [x] เฟส 3: หน้าผังโต๊ะ, หน้าเปิดรอบ/บันทึกชำระเงิน, เริ่มใช้โต๊ะ, ต่อเวลา, ปิดรอบ, timer จาก `serverNow`/`endsAt`, polling 2 วินาที และหน้า login
-- [x] เฟส 4: หน้าจัดการหมวดหมู่ สินค้า และรูปภาพ
-- [x] เฟส 5: หน้า QR ลูกค้าและ UX การสั่งเนื้อ
-- [x] เฟส 6: จอคิวพนักงาน การแจ้งเตือน การพิมพ์ QR และ timer ที่สมบูรณ์
-- [x] เฟส 7: ทดสอบ flow จริงตั้งแต่เปิดโต๊ะจนปิดโต๊ะ และแก้ปัญหา
+## Source และ implementation ที่ตรวจแล้ว
 
-## จุดเริ่มต้นครั้งถัดไป
+- [x] Next.js/TypeScript, Prisma 7.10.0, MySQL/InnoDB migration และ seed
+- [x] Staff authentication, HTTP-only session cookie, RBAC, OWNER bootstrap และ DB-backed login throttle/lockout
+- [x] เวลาใน business events ใช้ MySQL `CURRENT_TIMESTAMP(3)` ในจุดสำคัญ
+- [x] โต๊ะ, payment, session lifecycle, timer จาก `serverNow`, QR rotation/revocation และ idempotent customer orders
+- [x] Menu CRUD และ order queue
+- [x] Compose MySQL bind ที่ loopback เป็นค่าเริ่มต้นโดยไม่ลบ volume
+- [x] Error mapping สำหรับ unique conflict ที่รู้จัก พร้อม fallback สำหรับ unknown constraint
+- [x] Image storage เป็น URL/path key เท่านั้น; ยังไม่มี binary upload หรือ object-storage provider
+- [x] `test:integration` เป็น HTTP integration; ยังไม่มี browser E2E
+- [x] Public QR URL ใช้ `NEXT_PUBLIC_APP_URL` และบังคับเป็น HTTPS ใน runtime config
 
-เริ่มตรวจเฟส 7 โดยใช้โครงสร้างเดิม:
+## ผลตรวจรอบนี้
 
-- ทดสอบ flow จริงตั้งแต่เปิดโต๊ะจนปิดโต๊ะ และแก้ปัญหา
+ผ่านจาก source/local checks:
 
-เพิ่มในเฟส 6:
-
-- หน้า `/orders` จอคิวออเดอร์แบบ polling และเปลี่ยนสถานะตามลำดับงาน
-- แจ้งเตือนออเดอร์ใหม่ด้วย visual alert และเสียงที่ผู้ใช้เปิดเองได้
-- หน้า `/qr/:token` สร้าง QR ลูกค้าและสั่งพิมพ์
-- ปุ่มพิมพ์/หมุน QR จากผังโต๊ะ
-
-## ผลตรวจเฟส 7
-
-- แก้ปัญหาการเข้าถึง Docker ไม่ต้องเปลี่ยน permission เพิ่ม: ยืนยัน `docker info` ผ่านใน session ปัจจุบัน และ socket ยังคงเป็น `660` ไม่เปิดให้ทุกคนเข้าถึง
-- ผู้ใช้ `april` อยู่ในกลุ่ม `docker` ซึ่งเป็นสิทธิ์ระดับสูงกับเครื่อง แต่ session ปัจจุบันเข้าถึง Docker ได้ผ่าน socket ที่มี owner/group `nobody:nogroup`; ไม่มีการใช้ `chmod 666`
-- เปิด MySQL 8.4 ด้วย `docker compose up -d mysql` และตรวจ healthcheck ผ่าน โดยไม่ลบหรือ reset volume `shabu-buffet_mysql_data`
-- สร้าง `.env` เฉพาะเครื่องเพราะยังไม่มีไฟล์เดิม และไฟล์ถูก ignore ไม่ถูก commit
-- รัน `npm run db:migrate:deploy` และ `npm run db:seed` กับ MySQL จริงสำเร็จ
-- เพิ่ม `scripts/integration-flow.ts` และคำสั่ง `npm run test:integration` สำหรับ HTTP integration/E2E flow จริง พร้อมข้อมูล fixture แยกต่อการรัน
-- ทบทวน `docs/phase2-known-issues.md` แล้ว ไม่พบประเด็นที่จำเป็นต้องเปลี่ยนเพื่อผ่านเฟส 7 จึงไม่เปลี่ยนกติกาหรือ schema เดิม
-- ทดสอบครบ: permission rejection, แพ็กเกจหมูไม่มี QR, แพ็กเกจหมู+เนื้อมี QR, pre-start rejection, customer order/จอพนักงาน, status workflow จนเสิร์ฟ, menu CRUD/image key/เปิด-ปิดขาย, idempotency, concurrent requests, หมดเวลา, ออเดอร์เดิมทำต่อหลังหมดเวลา, timer stability และ QR ถูก revoke หลังปิดโต๊ะ
-- การทดสอบรูปภาพเป็น image key แบบ path ตาม storage abstraction ปัจจุบัน ยังไม่ใช่การอัปโหลด binary ไปยัง production provider
-
-- static flow checks ครอบคลุม status ของโต๊ะ, ordering window และ image key ผ่านใน `scripts/check-domain.ts`
-- `npm run typecheck`, `npm run lint`, `npm run build` และ `npm run db:validate` ผ่าน
-- ยังไม่สามารถยืนยัน transaction/integration flow กับ MySQL จริงได้ เพราะ Docker daemon ไม่มีสิทธิ์ใช้งานใน environment นี้
-- `npm run test:domain` ผ่านเมื่อรันใน execution profile ที่อนุญาตให้ `tsx` สร้าง named pipe
-- `npm run test:integration` ผ่านกับ Next.js และ MySQL จริง
-
-เพิ่มในเฟส 5:
-
-- หน้า `/customer/:token` สำหรับลูกค้าสแกน QR
-- แสดงสถานะโต๊ะและเวลาคงเหลือแบบอัปเดตอัตโนมัติ
-- เลือกจำนวนเมนูเนื้อและส่งออเดอร์ผ่าน idempotency key
-- แสดงออเดอร์ล่าสุดและล็อกการสั่งเมื่อโต๊ะยังไม่เริ่มหรือหมดเวลา
-
-## ผลตรวจล่าสุด
-
-ผ่านแล้ว:
-
-- `npm run typecheck`
-- `npm run lint`
-- `npm run test:domain`
-- `npm run build`
+- `npm run db:format`
 - `npm run db:validate`
+- `npm run db:generate`
+- `npm run typecheck`
+- `npm run lint` (ผ่าน มี warning `<img>` 4 รายการ ไม่มี error)
 
-เพิ่มในเฟส 4:
+ต้องรันด้วย MySQL จริงและ Next.js server:
 
-- หน้า `/menu` สำหรับจัดการหมวดหมู่และสินค้า โดยใช้ permission `MENU_MANAGE`
-- soft delete สำหรับหมวดหมู่/สินค้า เพื่อไม่กระทบออเดอร์เก่า
-- image storage boundary ที่รองรับ URL/path และพร้อมเปลี่ยนเป็น provider production
+- `npm run db:migrate:status`
+- `npm run test:domain`
+- `npm run test:integration` (รวม login lockout, permission, menu/image key, QR/order/idempotency/concurrency และ lifecycle)
+- `npm run build`
 
-ยังไม่ได้รันกับฐานข้อมูลจริง:
+ผลคำสั่งที่ต้องพึ่ง server ยังไม่สรุปว่าผ่านจนกว่าจะรันใน environment ที่ผู้ใช้จัดเตรียมให้ได้จริง ห้ามใช้ migrate reset, SQLite หรือ reset volume
 
-- `prisma migrate deploy`
-- `prisma db seed`
-- integration tests และ end-to-end tests ที่ใช้ MySQL
-- transaction/concurrency tests สำหรับเปิดโต๊ะ หมุน QR และรับออเดอร์
+## Blockers ก่อน deploy
 
-## ผลตรวจชุดสุดท้าย
-
-- `npm run typecheck` ผ่าน
-- `npm run lint` ผ่าน โดยมี warning เดิม 4 รายการเรื่องการใช้ `<img>` และไม่มี error
-- `npm run test:domain` ผ่าน
-- `npm run test:integration` ผ่าน
-- `npm run db:validate` ผ่าน
-- `npm run build` ผ่าน
-
-## ข้อจำกัดที่ต้องคงไว้
-
-- Docker daemon ยังใช้งานไม่ได้จาก `permission denied`
-- ห้ามแก้ permission ของ Docker หรือสิทธิ์ระบบเอง
-- ห้ามเปลี่ยน MySQL เป็น SQLite
-- ยังไม่มี secret จริงใน repository
-- ยังไม่ได้ deploy
-- ยังไม่ได้ทดสอบกับเครื่องพิมพ์รุ่นจริง
-
-## เอกสารติดตาม
-
-ข้อสังเกตของเฟส 2 อยู่ที่ `docs/phase2-known-issues.md` และยังไม่ได้เปลี่ยนกติกา/schema ตามรายการดังกล่าว
+- ยังไม่ได้ deploy และยังไม่มีการตรวจบน production-like server รอบนี้
+- ต้องมี MySQL endpoint/credential ผ่าน secret manager, สิทธิ์ migration, backup/restore plan และ maintenance window
+- ต้องมี HTTPS reverse proxy/DNS/certificate, trusted proxy configuration, firewall/ACL และ process/runtime configuration
+- ต้องมีการตัดสินใจเรื่อง persistence ของ local image path หากใช้ production; binary upload/S3 ยังเป็นงานที่ไม่มี implementation
+- ต้องเลือกและทดสอบ monitoring, log retention/redaction, backup retention, RPO/RTO และการพิมพ์กับ printer จริง
+- ต้องตรวจ A/AAAA จาก VPS, reverse proxy, certificate, HTTP→HTTPS redirect, headers และ public API หลังได้ SSH access
