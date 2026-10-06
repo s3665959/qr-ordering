@@ -4,9 +4,40 @@ import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { PrismaClient } from "../generated/prisma/client";
 import { hashPassword } from "../lib/auth/password";
 
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
-const prisma = new PrismaClient({ adapter: new PrismaMariaDb(process.env.DATABASE_URL) });
+const expectedAppUrl = "https://qr-order.test";
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL;
 const baseUrl = process.env.TEST_BASE_URL ?? "http://127.0.0.1:3000";
+
+function assertIntegrationConfiguration() {
+  const missing = [
+    ["TEST_DATABASE_URL", testDatabaseUrl],
+    ["DATABASE_URL", databaseUrl],
+    ["AUTH_SESSION_SECRET", process.env.AUTH_SESSION_SECRET],
+    ["QR_TOKEN_PEPPER", process.env.QR_TOKEN_PEPPER],
+    ["LOCAL_IMAGE_STORAGE_PATH", process.env.LOCAL_IMAGE_STORAGE_PATH],
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (missing.length > 0) throw new Error(`Integration configuration is missing: ${missing.join(", ")}`);
+  if (databaseUrl !== testDatabaseUrl) throw new Error("DATABASE_URL must equal TEST_DATABASE_URL for integration tests");
+  if (process.env.NEXT_PUBLIC_APP_URL !== expectedAppUrl) {
+    throw new Error(`Integration server must use NEXT_PUBLIC_APP_URL=${expectedAppUrl}`);
+  }
+
+  const parsedBaseUrl = new URL(baseUrl);
+  if (parsedBaseUrl.protocol !== "http:" || !["127.0.0.1", "localhost", "::1"].includes(parsedBaseUrl.hostname)) {
+    throw new Error("TEST_BASE_URL must point to a local HTTP server (127.0.0.1, localhost, or ::1)");
+  }
+
+  const parsedDatabaseUrl = new URL(testDatabaseUrl!);
+  if (!["127.0.0.1", "localhost", "::1"].includes(parsedDatabaseUrl.hostname)) {
+    throw new Error("TEST_DATABASE_URL must point to a local test database");
+  }
+}
+
+// Run all checks before creating Prisma or any fixture rows. A bad server
+// configuration must fail before the script can mutate the test database.
+assertIntegrationConfiguration();
+const prisma = new PrismaClient({ adapter: new PrismaMariaDb(testDatabaseUrl!) });
 const suffix = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const password = `phase7-local-${suffix}`;
 
@@ -107,6 +138,13 @@ async function main() {
   expectStatus(activeNumberClosed.response, 200, activeNumberClosed.body);
   await setTables(19);
   assert.equal((await prisma.diningTable.findUniqueOrThrow({ where: { id: table20.id } })).isActive, false);
+
+  const reductionBeforeOpen = await api("/api/staff/table-sessions", {
+    method: "POST",
+    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "test" } }),
+  }, ownerCookie);
+  expectStatus(reductionBeforeOpen.response, 404, reductionBeforeOpen.body);
+  assert.equal(await prisma.activeTableSession.findUnique({ where: { tableId: table20.id } }), null, "a reduced table must not get an active session");
 
   const throttleIp = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -226,7 +264,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     checks: [
-      "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
+      "table count increase/idempotency", "open-before-reduce conflict", "reduce-before-open rejection", "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
       "pre-start rejection", "customer order and staff queue", "order status workflow", "idempotent retry",
       "expiry behavior", "post-expiry existing order handling", "concurrent idempotency", "timer stability", "QR revocation on close",
     ],

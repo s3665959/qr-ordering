@@ -11,6 +11,28 @@ async function databaseNow(tx: Transaction): Promise<Date> {
   return result[0]?.now ?? new Date();
 }
 
+type LockedTable = { id: string; tableNumber: string };
+
+async function lockTable(tx: Transaction, storeId: string, tableId: string) {
+  const rows = await tx.$queryRaw<LockedTable[]>`
+    SELECT id, table_number AS tableNumber
+    FROM dining_tables
+    WHERE id = ${tableId} AND store_id = ${storeId}
+    FOR UPDATE
+  `;
+  return rows[0] ?? null;
+}
+
+async function lockNumberedTables(tx: Transaction, storeId: string) {
+  return tx.$queryRaw<LockedTable[]>`
+    SELECT id, table_number AS tableNumber
+    FROM dining_tables
+    WHERE store_id = ${storeId} AND table_number REGEXP '^[0-9]+$'
+    ORDER BY CAST(table_number AS UNSIGNED), table_number
+    FOR UPDATE
+  `;
+}
+
 function assertAmount(actual: number, expected: number) {
   if (Math.abs(actual - expected) > 0.005) {
     throw new HttpError(400, "PAYMENT_AMOUNT_MISMATCH", "ยอดชำระไม่ตรงกับยอดที่คำนวณ");
@@ -28,12 +50,21 @@ export async function openTableSession(
   },
 ) {
   return prisma.$transaction(async (tx) => {
-    const table = await tx.diningTable.findFirst({
-      where: { id: input.tableId, storeId: input.storeId, isActive: true },
-    });
+    // All table-count mutations lock numbered tables in ascending table-number
+    // order. Opening a session locks its table first, before checking state or
+    // the active-session pointer, so the two operations cannot observe stale
+    // state and cannot deadlock by taking table locks in different orders.
+    const lockedTable = await lockTable(tx, input.storeId, input.tableId);
+    const table = lockedTable
+      ? await tx.diningTable.findUnique({
+          where: { id: lockedTable.id },
+          include: { activeSession: true },
+        })
+      : null;
     if (!table) throw new HttpError(404, "TABLE_NOT_FOUND", "ไม่พบโต๊ะ");
+    if (!table.isActive) throw new HttpError(404, "TABLE_NOT_FOUND", "ไม่พบโต๊ะ");
 
-    const tablePointer = await tx.activeTableSession.findUnique({ where: { tableId: table.id } });
+    const tablePointer = table.activeSession;
     if (tablePointer) throw new HttpError(409, "TABLE_ALREADY_IN_USE", "โต๊ะนี้กำลังถูกใช้งาน");
 
     const buffetPackage = await tx.buffetPackage.findFirst({
@@ -261,11 +292,17 @@ export async function listTables(storeId: string) {
 
 export async function setTableCount(storeId: string, count: number) {
   return prisma.$transaction(async (tx) => {
+    // Lock every existing numbered table in one deterministic order before
+    // reading isActive/activeSession or changing the managed table set. This
+    // serializes with openTableSession and prevents deactivating an occupied
+    // table.
+    const lockedTables = await lockNumberedTables(tx, storeId);
     const tables = await tx.diningTable.findMany({
       where: { storeId },
       include: { activeSession: true },
     });
-    const numberedTables = tables.filter((table) => /^\d+$/.test(table.tableNumber));
+    const lockedTableIds = new Set(lockedTables.map((table) => table.id));
+    const numberedTables = tables.filter((table) => lockedTableIds.has(table.id));
     const tablesToDisable = numberedTables.filter((table) => Number(table.tableNumber) > count);
     const occupiedTables = tablesToDisable.filter((table) => table.activeSession);
 
