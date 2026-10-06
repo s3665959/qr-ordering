@@ -407,6 +407,7 @@ model Order {
   @@unique([tableSessionId, orderNumber])
   @@index([status, orderedAt])
   @@index([status, servedAt])
+  @@index([status, cancelledAt])
   @@index([tableSessionId, orderedAt])
   @@index([tableSessionId, servedAt])
   @@map("orders")

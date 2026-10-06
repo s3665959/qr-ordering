@@ -61,7 +61,7 @@ QR printing uses the browser's `window.print()` dialog. It has not been verified
 
 `npm run test:integration:testdb` เป็น HTTP integration test ที่เรียก endpoint ผ่าน Next.js และใช้ MySQL test แยก (`.env.test`, port 3307) ห้ามชี้ `DATABASE_URL` ไป production สำหรับการทดสอบ
 
-Order queue ใช้วันทำการ `Asia/Bangkok` ที่ 04:00 และไม่ต้องมี scheduled job; ก่อน deploy ให้ตรวจคิวค้างข้าม 04:00, servedAt จริง, history filter/pagination และ Expand บน desktop/mobile ด้วย browser จริง
+Order queue ใช้วันทำการ `Asia/Bangkok` ที่ 04:00 และไม่ต้องมี scheduled job; ก่อน deploy ให้ตรวจคิวค้างข้าม 04:00, `servedAt`/`cancelledAt` จริง, history filter/pagination และ Expand บน desktop/mobile ด้วย browser จริง
 
 ## Production checklist
 

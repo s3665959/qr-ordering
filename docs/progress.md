@@ -31,7 +31,7 @@ Deployment precheck: กำหนด `NEXT_PUBLIC_APP_URL=https://qr-order.81154
 - `npx prisma migrate deploy` บน test DB แยก (migration `0003_order_history_indexes`)
 - `npm run test:integration:testdb` (ผ่านครบ รวม order/concurrency เดิม)
 - `npm run build` (ผ่าน รวม `/orders/history`)
-- Browser smoke check ด้วย Chrome headless ที่ `390x844` และ `1440x900` บน localhost; mobile history layout และ unauthenticated guard ผ่าน
+- Authenticated Playwright + Chrome check บน test DB ที่ `390x844` และ `1440x900`; history URL filters/pagination, Expand ระหว่าง polling และ mobile layout ผ่าน พร้อมภาพใน `docs/screenshots/`
 
 ต้องรันด้วย MySQL จริงและ Next.js server:
 

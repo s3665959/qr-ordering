@@ -280,6 +280,8 @@ async function main() {
   const newOrderId = String((newOrderResult.body.order as Json).id);
   const directServe = await api(`/api/staff/orders/${newOrderId}/status`, { method: "POST", body: JSON.stringify({ status: "SERVED" }) }, ownerCookie);
   expectStatus(directServe.response, 409, directServe.body);
+  const cancelled = await api(`/api/staff/orders/${newOrderId}/status`, { method: "POST", body: JSON.stringify({ status: "CANCELLED", reason: "history fixture" }) }, ownerCookie);
+  expectStatus(cancelled.response, 200, cancelled.body);
 
   const legacyOrderIds: string[] = [];
   for (const legacyStatus of ["PREPARING", "DELIVERING"] as const) {
@@ -316,6 +318,24 @@ async function main() {
     const changed = await api(`/api/staff/orders/${legacyOrderId}/status`, { method: "POST", body: JSON.stringify({ status: "SERVED" }) }, ownerCookie);
     expectStatus(changed.response, 200, changed.body);
   }
+  const beforeBusinessDay = new Date("2026-10-06T20:59:00.000Z");
+  const afterBusinessDay = new Date("2026-10-06T21:01:00.000Z");
+  await prisma.order.update({ where: { id: orderId }, data: { orderedAt: beforeBusinessDay, servedAt: afterBusinessDay } });
+  await prisma.order.update({ where: { id: newOrderId }, data: { orderedAt: beforeBusinessDay, cancelledAt: afterBusinessDay } });
+  const servedHistory = await api("/api/staff/orders/history?businessDay=2026-10-07&status=SERVED&page=1&pageSize=50", {}, ownerCookie);
+  expectStatus(servedHistory.response, 200, servedHistory.body);
+  assert((servedHistory.body.orders as Json[]).some((order) => String(order.id) === orderId && String(order.servedAt) === afterBusinessDay.toISOString()), "served history must use servedAt across the 04:00 boundary");
+  const previousServedHistory = await api("/api/staff/orders/history?businessDay=2026-10-06&status=SERVED&page=1&pageSize=50", {}, ownerCookie);
+  expectStatus(previousServedHistory.response, 200, previousServedHistory.body);
+  assert(!(previousServedHistory.body.orders as Json[]).some((order) => String(order.id) === orderId), "served history must not use orderedAt");
+  const cancelledHistory = await api("/api/staff/orders/history?businessDay=2026-10-07&status=CANCELLED&page=1&pageSize=50", {}, ownerCookie);
+  expectStatus(cancelledHistory.response, 200, cancelledHistory.body);
+  assert((cancelledHistory.body.orders as Json[]).some((order) => String(order.id) === newOrderId && String(order.cancelledAt) === afterBusinessDay.toISOString()), "cancelled history must use cancelledAt");
+  const legacyWithoutCompletionTime = legacyOrderIds[0];
+  await prisma.order.update({ where: { id: legacyWithoutCompletionTime }, data: { orderedAt: beforeBusinessDay, servedAt: null } });
+  const oldHistory = await api("/api/staff/orders/history?businessDay=2026-10-07&status=SERVED&page=1&pageSize=50", {}, ownerCookie);
+  expectStatus(oldHistory.response, 200, oldHistory.body);
+  assert((oldHistory.body.orders as Json[]).some((order) => String(order.id) === legacyWithoutCompletionTime && order.servedAt === null), "old served records without completion time must remain viewable without guessed time");
   const customerAfterServed = await api(`/api/customer/sessions/${beefSession.qrToken}`);
   expectStatus(customerAfterServed.response, 200, customerAfterServed.body);
   assert.equal(String(((customerAfterServed.body.orders as Json[]).find((order) => String(order.id) === orderId) as Json).status), "SERVED", "customer polling must show the latest order status");
@@ -342,7 +362,7 @@ async function main() {
     checks: [
       "table count increase/idempotency", "open-before-reduce conflict", "reduce-before-open rejection", "concurrent open/reduce serialization (12 rounds)", "inactive-table invariant", "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
       "pre-start rejection", "customer order and staff queue", "order status workflow", "idempotent retry",
-      "expiry behavior", "post-expiry existing order handling", "simplified order transitions", "legacy queue compatibility", "concurrent status update", "concurrent idempotency", "timer stability", "QR revocation on close",
+      "expiry behavior", "post-expiry existing order handling", "simplified order transitions", "legacy queue compatibility", "business-day served/cancelled timestamps across 04:00", "old records without completion time", "concurrent status update", "concurrent idempotency", "timer stability", "QR revocation on close",
     ],
   }));
 }
