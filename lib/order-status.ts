@@ -1,5 +1,5 @@
 export const orderStatusLabels = {
-  NEW: "รอรับออเดอร์",
+  NEW: "ออเดอร์ใหม่",
   ACCEPTED: "รับออเดอร์แล้ว",
   PREPARING: "กำลังเตรียม",
   DELIVERING: "กำลังนำมาเสิร์ฟ",
@@ -7,7 +7,7 @@ export const orderStatusLabels = {
   CANCELLED: "ยกเลิก",
 } as const;
 
-export const orderQueueStatuses = ["NEW", "ACCEPTED", "PREPARING", "DELIVERING", "SERVED"] as const;
+export const orderQueueStatuses = ["NEW", "ACCEPTED", "SERVED"] as const;
 
 export const nextOrderStatus: Record<string, string | undefined> = {
   NEW: "ACCEPTED",
