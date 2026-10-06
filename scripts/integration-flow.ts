@@ -69,6 +69,45 @@ async function main() {
   const ownerCookie = cookieFrom(ownerLogin.response);
   assert(ownerCookie, "owner session cookie missing");
 
+  const setTables = async (count: number) => {
+    const result = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count }) }, ownerCookie);
+    expectStatus(result.response, 200, result.body);
+    assert.equal((result.body as Json).count, count);
+  };
+  await setTables(20);
+  const twentyTables = await prisma.diningTable.findMany({ where: { storeId: store.id, tableNumber: { in: Array.from({ length: 20 }, (_, index) => String(index + 1)) } } });
+  assert.equal(twentyTables.length, 20, "setting 20 tables must create tables 1-20");
+  assert(twentyTables.every((table) => table.isActive && table.capacity === null), "managed tables must be active and have no capacity");
+  await setTables(20);
+  assert.equal(await prisma.diningTable.count({ where: { storeId: store.id, tableNumber: { in: Array.from({ length: 20 }, (_, index) => String(index + 1)) } } }), 20, "repeating the same count must not duplicate tables");
+  await setTables(50);
+  assert.equal(await prisma.diningTable.count({ where: { storeId: store.id, isActive: true, tableNumber: { in: Array.from({ length: 50 }, (_, index) => String(index + 1)) } } }), 50, "setting 50 tables must activate tables 1-50");
+
+  const table21 = await prisma.diningTable.findFirstOrThrow({ where: { storeId: store.id, tableNumber: "21" } });
+  const numberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table21.id, packageId: pork.id, guestCount: 3, payment: { amount: 897, method: "test" } }) }, ownerCookie);
+  expectStatus(numberOpen.response, 201, numberOpen.body);
+  const numberSessionId = String(((numberOpen.body as Json).session as Json).id);
+  const numberClosed = await api(`/api/staff/table-sessions/${numberSessionId}/close`, { method: "POST" }, ownerCookie);
+  expectStatus(numberClosed.response, 200, numberClosed.body);
+  await setTables(20);
+  const historicalTable21 = await prisma.diningTable.findUniqueOrThrow({ where: { id: table21.id } });
+  assert.equal(historicalTable21.isActive, false, "reducing count must deactivate tables above the new count");
+  assert(await prisma.tableSession.findUnique({ where: { id: numberSessionId } }), "reducing count must preserve table session history");
+
+  const table20 = await prisma.diningTable.findFirstOrThrow({ where: { storeId: store.id, tableNumber: "20" } });
+  const activeNumberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "test" } }) }, ownerCookie);
+  expectStatus(activeNumberOpen.response, 201, activeNumberOpen.body);
+  const activeNumberSessionId = String(((activeNumberOpen.body as Json).session as Json).id);
+  const blockedReduction = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count: 19 }) }, ownerCookie);
+  expectStatus(blockedReduction.response, 409, blockedReduction.body);
+  assert(String((blockedReduction.body as Json).error && ((blockedReduction.body as Json).error as Json).message).includes("โต๊ะ 20"), "blocked reduction must name the occupied table");
+  const activeTable20 = await prisma.diningTable.findUniqueOrThrow({ where: { id: table20.id } });
+  assert.equal(activeTable20.isActive, true, "blocked reduction must not deactivate the occupied table");
+  const activeNumberClosed = await api(`/api/staff/table-sessions/${activeNumberSessionId}/close`, { method: "POST" }, ownerCookie);
+  expectStatus(activeNumberClosed.response, 200, activeNumberClosed.body);
+  await setTables(19);
+  assert.equal((await prisma.diningTable.findUniqueOrThrow({ where: { id: table20.id } })).isActive, false);
+
   const throttleIp = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const failed = await api("/api/auth/login", { method: "POST", headers: { "x-forwarded-for": throttleIp }, body: JSON.stringify({ username: owner.username, password: "wrong-password" }) });
@@ -86,6 +125,8 @@ async function main() {
     body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, guestCount: 1, payment: { amount: 299, method: "test" } }),
   }, restrictedCookie);
   expectStatus(forbidden.response, 403, forbidden.body);
+  const settingsForbidden = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count: 20 }) }, restrictedCookie);
+  expectStatus(settingsForbidden.response, 403, settingsForbidden.body);
 
   const categoryResponse = await api("/api/staff/menu/categories", {
     method: "POST",

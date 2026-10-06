@@ -17,6 +17,10 @@ export const openTableSchema = z.object({
   }),
 });
 
+export const tableCountSchema = z.object({
+  count: z.number().int().min(1).max(200),
+});
+
 export const extendTableSchema = z.object({
   minutes: z.number().int().positive().max(480),
   reason: z.string().trim().min(1).max(500),

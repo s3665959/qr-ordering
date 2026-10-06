@@ -258,3 +258,41 @@ export async function listTables(storeId: string) {
     }),
   };
 }
+
+export async function setTableCount(storeId: string, count: number) {
+  return prisma.$transaction(async (tx) => {
+    const tables = await tx.diningTable.findMany({
+      where: { storeId },
+      include: { activeSession: true },
+    });
+    const numberedTables = tables.filter((table) => /^\d+$/.test(table.tableNumber));
+    const tablesToDisable = numberedTables.filter((table) => Number(table.tableNumber) > count);
+    const occupiedTables = tablesToDisable.filter((table) => table.activeSession);
+
+    if (occupiedTables.length > 0) {
+      const tableNames = occupiedTables
+        .sort((left, right) => Number(left.tableNumber) - Number(right.tableNumber))
+        .map((table) => table.displayName)
+        .join(", ");
+      throw new HttpError(409, "TABLES_IN_USE", `ไม่สามารถลดจำนวนโต๊ะได้ เพราะ ${tableNames} กำลังใช้งานอยู่`);
+    }
+
+    for (let number = 1; number <= count; number += 1) {
+      const tableNumber = String(number);
+      await tx.diningTable.upsert({
+        where: { storeId_tableNumber: { storeId, tableNumber } },
+        update: { displayName: `โต๊ะ ${number}`, capacity: null, sortOrder: number, isActive: true },
+        create: { storeId, tableNumber, displayName: `โต๊ะ ${number}`, capacity: null, sortOrder: number, isActive: true },
+      });
+    }
+
+    if (tablesToDisable.length > 0) {
+      await tx.diningTable.updateMany({
+        where: { id: { in: tablesToDisable.map((table) => table.id) } },
+        data: { isActive: false },
+      });
+    }
+
+    return { count };
+  });
+}
