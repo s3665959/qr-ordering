@@ -33,12 +33,6 @@ async function lockNumberedTables(tx: Transaction, storeId: string) {
   `;
 }
 
-function assertAmount(actual: number, expected: number) {
-  if (Math.abs(actual - expected) > 0.005) {
-    throw new HttpError(400, "PAYMENT_AMOUNT_MISMATCH", "ยอดชำระไม่ตรงกับยอดที่คำนวณ");
-  }
-}
-
 export async function openTableSession(
   input: {
     storeId: string;
@@ -46,7 +40,6 @@ export async function openTableSession(
     tableId: string;
     packageId: string;
     guestCount: number;
-    payment: { amount: number; method: string; reference?: string; notes?: string };
   },
 ) {
   return prisma.$transaction(async (tx) => {
@@ -73,7 +66,6 @@ export async function openTableSession(
     if (!buffetPackage) throw new HttpError(404, "PACKAGE_NOT_FOUND", "ไม่พบแพ็กเกจ");
 
     const totalAmount = Number(buffetPackage.pricePerPerson) * input.guestCount;
-    assertAmount(input.payment.amount, totalAmount);
 
     const session = await tx.tableSession.create({
       data: {
@@ -95,19 +87,6 @@ export async function openTableSession(
       data: { tableId: table.id, tableSessionId: session.id },
     });
 
-    await tx.payment.create({
-      data: {
-        tableSessionId: session.id,
-        amount: input.payment.amount,
-        method: input.payment.method,
-        reference: input.payment.reference,
-        notes: input.payment.notes,
-        status: "CONFIRMED",
-        paidAt: await databaseNow(tx),
-        receivedById: input.staffId,
-      },
-    });
-
     let qrToken: string | undefined;
     if (buffetPackage.allowsBeefOrdering) {
       qrToken = createOpaqueToken();
@@ -126,7 +105,7 @@ export async function openTableSession(
     await tx.tableSessionEvent.create({
       data: {
         tableSessionId: session.id,
-        eventType: "TABLE_OPENED_AND_PAID",
+        eventType: "TABLE_OPENED",
         actorStaffId: input.staffId,
         metadata: { packageCode: buffetPackage.code, hasQr: Boolean(qrToken) },
       },
@@ -138,18 +117,11 @@ export async function openTableSession(
 
 export async function startTableSession(sessionId: string, staffId: string, storeId: string) {
   return prisma.$transaction(async (tx) => {
-    const session = await tx.tableSession.findFirst({
-      where: { id: sessionId, storeId },
-      include: { payments: { where: { status: "CONFIRMED" } } },
-    });
+    const session = await tx.tableSession.findFirst({ where: { id: sessionId, storeId } });
     if (!session) throw new HttpError(404, "TABLE_SESSION_NOT_FOUND", "ไม่พบรอบโต๊ะ");
     if (session.lifecycleStatus !== "PAID_PENDING_START") {
       throw new HttpError(409, "TABLE_SESSION_NOT_STARTABLE", "รอบโต๊ะนี้เริ่มหรือปิดไปแล้ว");
     }
-    if (session.payments.length === 0) {
-      throw new HttpError(409, "PAYMENT_NOT_CONFIRMED", "ยังไม่มีการยืนยันการชำระเงิน");
-    }
-
     const now = await databaseNow(tx);
     const endsAt = new Date(now.getTime() + session.durationMinutesSnapshot * 60_000);
     const updated = await tx.tableSession.update({

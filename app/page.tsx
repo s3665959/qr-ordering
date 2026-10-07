@@ -8,6 +8,7 @@ type TableSession = { id: string; packageNameSnapshot: string; totalAmount: numb
 type Table = { id: string; tableNumber: string; displayName: string; capacity: number | null; effectiveStatus: TableStatus; activeSession: TableSession | null };
 type BuffetPackage = { id: string; name: string; pricePerPerson: number | string; durationMinutes: number; allowsBeefOrdering: boolean };
 type Staff = { displayName: string; permissions: string[] } | null;
+type NumericField = "tableNumber" | "guestCount";
 
 const statusLabels: Record<TableStatus, string> = { AVAILABLE: "ว่าง", PAID_PENDING_START: "รอเริ่มใช้", ACTIVE: "กำลังใช้งาน", ENDING_SOON: "ใกล้หมดเวลา", TIME_EXPIRED: "ครบเวลา", CLOSED: "ปิดรอบแล้ว", CANCELLED: "ยกเลิก" };
 const statusClass: Record<TableStatus, string> = { AVAILABLE: styles.statusAvailable, PAID_PENDING_START: styles.statusPending, ACTIVE: styles.statusActive, ENDING_SOON: styles.statusWarning, TIME_EXPIRED: styles.statusExpired, CLOSED: styles.statusClosed, CANCELLED: styles.statusClosed };
@@ -38,7 +39,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [authRequired, setAuthRequired] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
-  const [openForm, setOpenForm] = useState({ tableNumber: "", packageId: "", guestCount: 2, method: "เงินสด" });
+  const [openForm, setOpenForm] = useState({ tableNumber: "", packageId: "", guestCount: "2" });
+  const [focusedNumericField, setFocusedNumericField] = useState<NumericField>("tableNumber");
   const [tableCount, setTableCount] = useState("");
   const [savingTableCount, setSavingTableCount] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -62,16 +64,38 @@ export default function Home() {
   const selectedTable = useMemo(() => tables.find((table) => table.tableNumber === openForm.tableNumber), [openForm.tableNumber, tables]);
   const canManageSettings = Boolean(staff?.permissions.includes("SETTINGS_MANAGE"));
   const selectedPackage = packages.find((item) => item.id === openForm.packageId);
-  const estimatedTotal = selectedPackage ? Number(selectedPackage.pricePerPerson) * openForm.guestCount : 0;
+  const guestCount = Number(openForm.guestCount);
+  const estimatedTotal = selectedPackage && Number.isInteger(guestCount) && guestCount > 0 ? Number(selectedPackage.pricePerPerson) * guestCount : 0;
+
+  function updateNumericField(field: NumericField, value: string) {
+    setOpenForm((current) => ({ ...current, [field]: value.replace(/\D/g, "") }));
+  }
+
+  function pressNumberPad(value: string) {
+    updateNumericField(focusedNumericField, `${openForm[focusedNumericField]}${value}`);
+  }
+
+  function deleteNumberPadValue() {
+    updateNumericField(focusedNumericField, openForm[focusedNumericField].slice(0, -1));
+  }
+
+  function clearNumberPadValue() {
+    updateNumericField(focusedNumericField, "");
+  }
 
   async function openTable(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!openForm.tableNumber || !openForm.packageId) return;
+    event.preventDefault();
+    const parsedGuestCount = Number(openForm.guestCount);
+    if (!/^[1-9]\d*$/.test(openForm.tableNumber) || !Number.isInteger(parsedGuestCount) || parsedGuestCount < 1 || parsedGuestCount > 100 || !openForm.packageId) {
+      setError("หมายเลขโต๊ะและจำนวนลูกค้าต้องเป็นจำนวนเต็มบวก");
+      return;
+    }
     if (!selectedTable) { setError(`ไม่พบโต๊ะหมายเลข ${openForm.tableNumber}`); return; }
     if (selectedTable.effectiveStatus !== "AVAILABLE") { setError(`โต๊ะ ${openForm.tableNumber} กำลังใช้งานหรือยังไม่ว่าง`); return; }
     setSubmitting(true); setActionMessage("");
     try {
-      await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: selectedTable.id, packageId: openForm.packageId, guestCount: openForm.guestCount, payment: { amount: estimatedTotal, method: openForm.method } }) });
-      setActionMessage("เปิดรอบและบันทึกการชำระเงินแล้ว สามารถกดเริ่มใช้โต๊ะได้"); setOpenForm({ tableNumber: "", packageId: "", guestCount: 2, method: "เงินสด" }); await refresh();
+      await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: selectedTable.id, packageId: openForm.packageId, guestCount: parsedGuestCount }) });
+      setActionMessage("เปิดรอบแล้ว สามารถกดเริ่มใช้โต๊ะได้"); setOpenForm({ tableNumber: "", packageId: "", guestCount: "2" }); await refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "เปิดรอบไม่สำเร็จ"); } finally { setSubmitting(false); }
   }
   async function saveTableCount(event: FormEvent<HTMLFormElement>) {
@@ -84,12 +108,11 @@ export default function Home() {
       setTableCount(""); setActionMessage(`ตั้งจำนวนโต๊ะเป็น ${count} โต๊ะแล้ว`); await refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "ตั้งจำนวนโต๊ะไม่สำเร็จ"); } finally { setSavingTableCount(false); }
   }
-  async function sessionAction(sessionId: string, action: "start" | "close" | "extend") {
+  async function sessionAction(sessionId: string, action: "start" | "close") {
     setActionMessage("");
     try {
-      const body = action === "extend" ? JSON.stringify({ minutes: 30, reason: "ต่อเวลาโดยผู้จัดการ/แคชเชียร์" }) : undefined;
-      await api(`/api/staff/table-sessions/${sessionId}/${action}`, { method: "POST", body });
-      setActionMessage(action === "start" ? "เริ่มจับเวลาแล้ว" : action === "close" ? "ปิดรอบและเพิกถอน QR แล้ว" : "ต่อเวลา 30 นาทีแล้ว"); await refresh();
+      await api(`/api/staff/table-sessions/${sessionId}/${action}`, { method: "POST" });
+      setActionMessage(action === "start" ? "เริ่มจับเวลาแล้ว" : "ปิดรอบและเพิกถอน QR แล้ว"); await refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "ดำเนินการไม่สำเร็จ"); }
   }
   async function printQr(sessionId: string) {
@@ -110,15 +133,15 @@ export default function Home() {
   const activeCount = tables.filter((table) => ["ACTIVE", "ENDING_SOON"].includes(table.effectiveStatus)).length;
   const expiredCount = tables.filter((table) => table.effectiveStatus === "TIME_EXPIRED").length;
   return <main className={styles.shell}>
-    <header className={styles.header}><div><span className={styles.eyebrow}>SHABU CONTROL / FRONT DESK</span><h1>ผังโต๊ะและเปิดรอบ</h1><p>จัดการการชำระเงิน เริ่มใช้โต๊ะ และติดตามเวลาจาก Backend</p></div><div className={styles.staffBadge}><a href="/orders">คิวออเดอร์</a><a href="/menu">จัดการเมนู</a><span className={styles.liveDot} />{staff?.displayName ?? "พนักงาน"}</div></header>
+    <header className={styles.header}><div><span className={styles.eyebrow}>SHABU CONTROL / FRONT DESK</span><h1>ผังโต๊ะและเปิดรอบ</h1><p>เปิดรอบ เริ่มใช้โต๊ะ และติดตามเวลาจาก Backend</p></div><div className={styles.staffBadge}><a href="/orders">คิวออเดอร์</a><a href="/menu">จัดการเมนู</a><span className={styles.liveDot} />{staff?.displayName ?? "พนักงาน"}</div></header>
     {(error || actionMessage) && <div className={error ? styles.alertError : styles.alertSuccess}>{error || actionMessage}</div>}
     <section className={styles.summary} aria-label="สรุปสถานะโต๊ะ"><div><span>โต๊ะทั้งหมด</span><strong>{tables.length}</strong></div><div><span>กำลังใช้งาน</span><strong>{activeCount}</strong></div><div><span>ครบเวลา รอปิด</span><strong className={expiredCount ? styles.dangerText : ""}>{expiredCount}</strong></div><div><span>อัปเดตล่าสุด</span><strong className={styles.clock}>{displayNowMs ? new Date(displayNowMs).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }) : "—"}</strong></div></section>
     <div className={styles.workspace}>
       <section className={styles.panel}><div className={styles.panelHeading}><div><span className={styles.eyebrow}>LIVE FLOOR</span><h2>ผังโต๊ะ</h2></div><span className={styles.polling}><span className={styles.liveDot} />อัปเดตทุก 2 วินาที</span></div>{canManageSettings && <form className={styles.settingsForm} onSubmit={saveTableCount}><label>จำนวนโต๊ะ<input type="number" min="1" max="200" step="1" value={tableCount} onChange={(event) => setTableCount(event.target.value)} placeholder="เช่น 20 หรือ 50" required /></label><button className={styles.secondaryButton} disabled={savingTableCount}>{savingTableCount ? "กำลังบันทึก…" : "บันทึกจำนวนโต๊ะ"}</button></form>}<div className={styles.tableGrid}>
-        {tables.map((table) => { const session = table.activeSession; const status = table.effectiveStatus; return <article className={`${styles.tableCard} ${status === "TIME_EXPIRED" ? styles.cardExpired : ""}`} key={table.id}><div className={styles.tableTop}><span className={styles.tableNumber}>{table.displayName}</span><span className={`${styles.status} ${statusClass[status]}`}>{statusLabels[status]}</span></div>{session ? <><div className={styles.packageLine}>{session.packageNameSnapshot}<span>{session.guestCount} คน</span></div><div className={styles.timer}>{remainingLabel(session.endsAt, nowMs)}</div><div className={styles.timerMeta}>{session.startedAt ? `เริ่ม ${new Date(session.startedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}` : "ชำระเงินแล้ว รอเริ่มใช้โต๊ะ"}</div><div className={styles.cardActions}>{status === "PAID_PENDING_START" && <button className={styles.primaryButton} onClick={() => void sessionAction(session.id, "start")}>เริ่มใช้โต๊ะ</button>}{session.allowsBeefOrderingSnapshot && status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.secondaryButton} onClick={() => void printQr(session.id)}>พิมพ์ QR</button>}{status !== "PAID_PENDING_START" && status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.secondaryButton} onClick={() => void sessionAction(session.id, "extend")}>ต่อ 30 นาที</button>}{status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.textButton} onClick={() => void sessionAction(session.id, "close")}>ปิดรอบ</button>}</div></> : <div className={styles.emptyTable}>พร้อมรับลูกค้า</div>}</article>; })}
+        {tables.map((table) => { const session = table.activeSession; const status = table.effectiveStatus; return <article className={`${styles.tableCard} ${status === "TIME_EXPIRED" ? styles.cardExpired : ""}`} key={table.id}><div className={styles.tableTop}><span className={styles.tableNumber}>{table.displayName}</span><span className={`${styles.status} ${statusClass[status]}`}>{statusLabels[status]}</span></div>{session ? <><div className={styles.packageLine}>{session.packageNameSnapshot}<span>{session.guestCount} คน</span></div><div className={styles.timer}>{remainingLabel(session.endsAt, nowMs)}</div><div className={styles.timerMeta}>{session.startedAt ? `เริ่ม ${new Date(session.startedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}` : "รอเริ่มใช้โต๊ะ"}</div><div className={styles.cardActions}>{status === "PAID_PENDING_START" && <button className={styles.primaryButton} onClick={() => void sessionAction(session.id, "start")}>เริ่มใช้โต๊ะ</button>}{session.allowsBeefOrderingSnapshot && status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.secondaryButton} onClick={() => void printQr(session.id)}>พิมพ์ QR</button>}{status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.textButton} onClick={() => void sessionAction(session.id, "close")}>ปิดรอบ</button>}</div></> : <div className={styles.emptyTable}>พร้อมรับลูกค้า</div>}</article>; })}
         {!tables.length && <div className={styles.emptyState}>ยังไม่มีโต๊ะที่เปิดใช้งานในสาขานี้{canManageSettings ? " — กรอกจำนวนโต๊ะด้านบนเพื่อสร้างโต๊ะ 1 ถึงจำนวนที่ต้องการ" : " — กรุณาแจ้งผู้มีสิทธิ์ SETTINGS_MANAGE ให้ตั้งจำนวนโต๊ะ"}</div>}
       </div></section>
-      <section className={styles.panel}><div className={styles.panelHeading}><div><span className={styles.eyebrow}>CHECKOUT</span><h2>เปิดรอบใหม่</h2></div></div><form className={styles.openForm} onSubmit={openTable}><label>หมายเลขโต๊ะ<input type="number" min="1" max="200" step="1" value={openForm.tableNumber} onChange={(event) => setOpenForm((current) => ({ ...current, tableNumber: event.target.value }))} placeholder="เช่น 12" required /></label><label>แพ็กเกจทั้งโต๊ะ<select value={openForm.packageId} onChange={(event) => setOpenForm((current) => ({ ...current, packageId: event.target.value }))} required><option value="">เลือกแพ็กเกจ</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.pricePerPerson)} บาท/คน{item.allowsBeefOrdering ? " · มี QR เนื้อ" : ""}</option>)}</select></label><label>จำนวนลูกค้า<input type="number" min="1" max="100" value={openForm.guestCount} onChange={(event) => setOpenForm((current) => ({ ...current, guestCount: Number(event.target.value) }))} required /></label><label>วิธีชำระเงิน<select value={openForm.method} onChange={(event) => setOpenForm((current) => ({ ...current, method: event.target.value }))}><option>เงินสด</option><option>QR/โอน</option><option>บัตร</option><option>อื่น ๆ</option></select></label><div className={styles.totalBox}><span>ยอดที่ต้องชำระ</span><strong>{money(estimatedTotal)} บาท</strong><small>QR จะออกได้เมื่อชำระเงินสำเร็จ แต่ยังสั่งไม่ได้จนกดเริ่มใช้โต๊ะ</small></div><button className={styles.submitButton} disabled={submitting || !openForm.tableNumber || !openForm.packageId}>{submitting ? "กำลังบันทึก…" : "ยืนยันการชำระและเปิดรอบ"}</button></form></section>
+      <section className={styles.panel}><div className={styles.panelHeading}><div><span className={styles.eyebrow}>CHECKOUT</span><h2>เปิดรอบใหม่</h2></div></div><form className={styles.openForm} onSubmit={openTable}><label>หมายเลขโต๊ะ<input type="text" inputMode="numeric" pattern="[0-9]*" minLength={1} maxLength={3} value={openForm.tableNumber} onFocus={() => setFocusedNumericField("tableNumber")} onChange={(event) => updateNumericField("tableNumber", event.target.value)} placeholder="เช่น 12" required /></label><label>แพ็กเกจทั้งโต๊ะ<select value={openForm.packageId} onChange={(event) => setOpenForm((current) => ({ ...current, packageId: event.target.value }))} required><option value="">เลือกแพ็กเกจ</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.pricePerPerson)} บาท/คน{item.allowsBeefOrdering ? " · มี QR เนื้อ" : ""}</option>)}</select></label><label>จำนวนลูกค้า<input type="text" inputMode="numeric" pattern="[0-9]*" minLength={1} maxLength={3} value={openForm.guestCount} onFocus={() => setFocusedNumericField("guestCount")} onChange={(event) => updateNumericField("guestCount", event.target.value)} required /></label><div className={styles.numberPad} aria-label="แป้นตัวเลข"><div className={styles.numberPadHeader}>กำลังกรอก: <strong>{focusedNumericField === "tableNumber" ? "หมายเลขโต๊ะ" : "จำนวนลูกค้า"}</strong></div><div className={styles.numberPadGrid}>{["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => <button className={styles.numberPadButton} key={digit} type="button" onClick={() => pressNumberPad(digit)}>{digit}</button>)}<button className={styles.numberPadButton} type="button" onClick={clearNumberPadValue}>ล้างค่า</button><button className={styles.numberPadButton} type="button" onClick={() => pressNumberPad("0")}>0</button><button className={styles.numberPadButton} type="button" aria-label="ลบตัวเลขล่าสุด" onClick={deleteNumberPadValue}>ลบ</button></div></div><div className={styles.totalBox}><span>ราคารอบนี้</span><strong>{money(estimatedTotal)} บาท</strong><small>เลือกแพ็กเกจและจำนวนลูกค้าเพื่อคำนวณราคา ระบบจะบันทึกราคานี้ไว้ในรอบใหม่</small></div><button className={styles.submitButton} disabled={submitting || !/^[1-9]\d*$/.test(openForm.tableNumber) || !/^[1-9]\d*$/.test(openForm.guestCount) || !openForm.packageId}>{submitting ? "กำลังบันทึก…" : "ยืนยันเปิดรอบ"}</button></form></section>
     </div>
   </main>;
 }
