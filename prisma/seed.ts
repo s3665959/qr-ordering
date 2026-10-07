@@ -73,12 +73,12 @@ async function main() {
     }),
     prisma.buffetPackage.upsert({
       where: { storeId_code: { storeId: store.id, code: "PORK_BEEF" } },
-      update: {},
+      update: { pricePerPerson: 399 },
       create: {
         storeId: store.id,
         code: "PORK_BEEF",
         name: "บุฟเฟต์หมูและเนื้อวัว",
-        pricePerPerson: 349,
+        pricePerPerson: 399,
         durationMinutes: 120,
         allowsBeefOrdering: true,
         sortOrder: 20,

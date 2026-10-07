@@ -67,6 +67,11 @@ async function main() {
   const pork = packages.find((item) => item.code === "PORK");
   const beef = packages.find((item) => item.code === "PORK_BEEF");
   assert(pork && beef, "seed packages are required");
+  assert.equal(Number(beef.pricePerPerson), 399, "pork and beef package source price must be 399");
+  const historicalBeefSnapshots = new Map(
+    (await prisma.tableSession.findMany({ where: { packageId: beef.id }, select: { id: true, pricePerPersonSnapshot: true, totalAmount: true } }))
+      .map((session) => [session.id, `${session.pricePerPersonSnapshot}:${session.totalAmount}`] as const),
+  );
 
   const ownerRole = await prisma.role.findUniqueOrThrow({ where: { code: "OWNER" } });
   const serverRole = await prisma.role.findUniqueOrThrow({ where: { code: "SERVER" } });
@@ -100,6 +105,12 @@ async function main() {
   const ownerCookie = cookieFrom(ownerLogin.response);
   assert(ownerCookie, "owner session cookie missing");
 
+  const invalidGuestCount = await api("/api/staff/table-sessions", {
+    method: "POST",
+    body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, guestCount: 0 }),
+  }, ownerCookie);
+  expectStatus(invalidGuestCount.response, 400, invalidGuestCount.body);
+
   const setTables = async (count: number) => {
     const result = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count }) }, ownerCookie);
     expectStatus(result.response, 200, result.body);
@@ -124,7 +135,7 @@ async function main() {
   assert.equal(await prisma.diningTable.count({ where: { storeId: store.id, isActive: true, tableNumber: { in: Array.from({ length: 50 }, (_, index) => String(index + 1)) } } }), 50, "setting 50 tables must activate tables 1-50");
 
   const table21 = await prisma.diningTable.findFirstOrThrow({ where: { storeId: store.id, tableNumber: "21" } });
-  const numberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table21.id, packageId: pork.id, guestCount: 3, payment: { amount: 897, method: "test" } }) }, ownerCookie);
+  const numberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table21.id, packageId: pork.id, guestCount: 3 }) }, ownerCookie);
   expectStatus(numberOpen.response, 201, numberOpen.body);
   const numberSessionId = String(((numberOpen.body as Json).session as Json).id);
   const numberClosed = await api(`/api/staff/table-sessions/${numberSessionId}/close`, { method: "POST" }, ownerCookie);
@@ -135,7 +146,7 @@ async function main() {
   assert(await prisma.tableSession.findUnique({ where: { id: numberSessionId } }), "reducing count must preserve table session history");
 
   const table20 = await prisma.diningTable.findFirstOrThrow({ where: { storeId: store.id, tableNumber: "20" } });
-  const activeNumberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "test" } }) }, ownerCookie);
+  const activeNumberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2 }) }, ownerCookie);
   expectStatus(activeNumberOpen.response, 201, activeNumberOpen.body);
   const activeNumberSessionId = String(((activeNumberOpen.body as Json).session as Json).id);
   const blockedReduction = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count: 19 }) }, ownerCookie);
@@ -150,14 +161,14 @@ async function main() {
 
   const reductionBeforeOpen = await api("/api/staff/table-sessions", {
     method: "POST",
-    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "test" } }),
+    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2 }),
   }, ownerCookie);
   expectStatus(reductionBeforeOpen.response, 404, reductionBeforeOpen.body);
   assert.equal(await prisma.activeTableSession.findUnique({ where: { tableId: table20.id } }), null, "a reduced table must not get an active session");
 
   const concurrentOpen = () => api("/api/staff/table-sessions", {
     method: "POST",
-    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2, payment: { amount: 598, method: "concurrency-test" } }),
+    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2 }),
   }, ownerCookie);
   const concurrentReduce = () => api("/api/staff/tables", {
     method: "POST",
@@ -199,7 +210,7 @@ async function main() {
   const restrictedCookie = cookieFrom(restrictedLogin.response);
   const forbidden = await api("/api/staff/table-sessions", {
     method: "POST",
-    body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, guestCount: 1, payment: { amount: 299, method: "test" } }),
+    body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, guestCount: 1 }),
   }, restrictedCookie);
   expectStatus(forbidden.response, 403, forbidden.body);
   const settingsForbidden = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count: 20 }) }, restrictedCookie);
@@ -230,8 +241,8 @@ async function main() {
   const available = await api(`/api/staff/menu/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ isAvailable: true, name: `เนื้อทดสอบเปิดขาย ${suffix}` }) }, ownerCookie);
   expectStatus(available.response, 200, available.body);
 
-  const open = async (tableId: string, packageId: string, amount: number) => {
-    const result = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId, packageId, guestCount: 1, payment: { amount, method: "test" } }) }, ownerCookie);
+  const open = async (tableId: string, packageId: string) => {
+    const result = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId, packageId, guestCount: 1 }) }, ownerCookie);
     expectStatus(result.response, 201, result.body);
     return result.body as { session: Json; qrToken: string | null };
   };
@@ -240,14 +251,23 @@ async function main() {
     expectStatus(result.response, 200, result.body);
   };
 
-  const porkSession = await open(tables[0].id, pork.id, 299);
+  const porkSession = await open(tables[0].id, pork.id);
   assert.equal(porkSession.qrToken, null, "pork package must not issue QR");
+  assert.equal(Number((porkSession.session as Json).pricePerPersonSnapshot), 299, "pork session must snapshot its package price");
+  assert.equal(await prisma.payment.count({ where: { tableSessionId: String(porkSession.session.id) } }), 0, "opening a session must not invent a payment method");
   await start(String(porkSession.session.id));
   const porkClosed = await api(`/api/staff/table-sessions/${porkSession.session.id}/close`, { method: "POST" }, ownerCookie);
   expectStatus(porkClosed.response, 200, porkClosed.body);
 
-  const beefSession = await open(tables[1].id, beef.id, 349);
+  const beefSession = await open(tables[1].id, beef.id);
   assert(beefSession.qrToken, "pork+beef package must issue QR");
+  assert.equal(Number((beefSession.session as Json).pricePerPersonSnapshot), 399, "new pork and beef session must snapshot 399");
+  assert.equal(Number((beefSession.session as Json).totalAmount), 399, "new one-person pork and beef session total must be 399");
+  assert.equal(await prisma.payment.count({ where: { tableSessionId: String(beefSession.session.id) } }), 0, "opening a session must not invent a payment method");
+  for (const [id, snapshot] of historicalBeefSnapshots) {
+    const existing = await prisma.tableSession.findUniqueOrThrow({ where: { id }, select: { pricePerPersonSnapshot: true, totalAmount: true } });
+    assert.equal(`${existing.pricePerPersonSnapshot}:${existing.totalAmount}`, snapshot, "existing session price history must remain unchanged");
+  }
   const beefId = String(beefSession.session.id);
   const beforeStart = await api(`/api/customer/sessions/${beefSession.qrToken}/orders`, { method: "POST", body: JSON.stringify({ idempotencyKey: `phase7-before-${suffix}`, items: [{ menuItemId: itemId, quantity: 1 }] }) });
   expectStatus(beforeStart.response, 409, beforeStart.body);
@@ -349,7 +369,7 @@ async function main() {
   expectStatus(customerAfterServed.response, 200, customerAfterServed.body);
   assert.equal(String(((customerAfterServed.body.orders as Json[]).find((order) => String(order.id) === orderId) as Json).status), "SERVED", "customer polling must show the latest order status");
 
-  const concurrentSession = await open(tables[2].id, beef.id, 349);
+  const concurrentSession = await open(tables[2].id, beef.id);
   assert(concurrentSession.qrToken);
   await start(String(concurrentSession.session.id));
   const concurrentPayload = { idempotencyKey: `phase7-concurrent-${suffix}`, items: [{ menuItemId: itemId, quantity: 1 }] };
