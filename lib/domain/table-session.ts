@@ -39,6 +39,8 @@ export async function openTableSession(
     staffId: string;
     tableId: string;
     packageId: string;
+    adultCount: number;
+    childCount: number;
     guestCount: number;
   },
 ) {
@@ -64,8 +66,12 @@ export async function openTableSession(
       where: { id: input.packageId, storeId: input.storeId, isActive: true },
     });
     if (!buffetPackage) throw new HttpError(404, "PACKAGE_NOT_FOUND", "ไม่พบแพ็กเกจ");
+    if (input.childCount > 0 && !buffetPackage.childPricePerPerson) {
+      throw new HttpError(409, "CHILD_PRICE_NOT_AVAILABLE", "แพ็กเกจนี้ยังไม่มีราคาเด็ก");
+    }
 
-    const totalAmount = Number(buffetPackage.pricePerPerson) * input.guestCount;
+    const totalAmount = buffetPackage.pricePerPerson.mul(input.adultCount)
+      .add((buffetPackage.childPricePerPerson ?? new Prisma.Decimal(0)).mul(input.childCount));
 
     const session = await tx.tableSession.create({
       data: {
@@ -73,8 +79,11 @@ export async function openTableSession(
         tableId: table.id,
         packageId: buffetPackage.id,
         guestCount: input.guestCount,
+        adultCount: input.adultCount,
+        childCount: input.childCount,
         packageNameSnapshot: buffetPackage.name,
         pricePerPersonSnapshot: buffetPackage.pricePerPerson,
+        childPricePerPersonSnapshot: buffetPackage.childPricePerPerson,
         durationMinutesSnapshot: buffetPackage.durationMinutes,
         allowsBeefOrderingSnapshot: buffetPackage.allowsBeefOrdering,
         totalAmount,

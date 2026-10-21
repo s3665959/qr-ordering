@@ -1,0 +1,20 @@
+.page { min-height: 100vh; display: grid; place-items: start center; padding: 32px 12px; background: #eee; color: #000; }
+.slip { box-sizing: border-box; width: 80mm; max-width: 100%; padding: 10mm 6mm; background: #fff; text-align: center; font-family: Arial, Tahoma, sans-serif; box-shadow: 0 6px 24px #0002; }
+.slip h1 { margin: 0 0 7mm; font-size: 20px; font-weight: 800; letter-spacing: .04em; }
+.details p { margin: 0 0 3mm; font-size: 15px; font-weight: 600; line-height: 1.35; }
+.qr { display: block; width: min(100%, 52mm); height: auto; margin: 5mm auto 0; image-rendering: pixelated; }
+.loading { margin: 6mm 0; font-size: 12px; }
+.printButton { margin-top: 8mm; width: 100%; padding: 12px; background: #000; border: 0; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.printButton:disabled { opacity: .5; cursor: wait; }
+@media print {
+  @page { size: auto; margin: 0; }
+  .page { display: block; min-height: 0; padding: 0; background: #fff; }
+  .slip { width: 100%; max-width: none; padding: 5mm 3mm; box-shadow: none; break-inside: avoid; }
+  .printButton, .loading { display: none; }
+}
+@media print and (max-width: 65mm) {
+  .slip { padding: 3mm 2mm; }
+  .slip h1 { font-size: 17px; }
+  .details p { font-size: 12px; }
+  .qr { width: min(100%, 42mm); }
+}

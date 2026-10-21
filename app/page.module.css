@@ -16,3 +16,7 @@
 .numberPad { display: grid; gap: 10px; margin-top: -2px; padding: 12px; border: 1px solid #e4ded6; border-radius: 13px; background: #f8f1e9; }
 .numberPadHeader { color: #687078; font-size: 13px; }.numberPadHeader strong { color: #2c383d; }
 .numberPadGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }.numberPadButton { min-width: 44px; min-height: 44px; border: 1px solid #d9d1c8; border-radius: 9px; color: #30383c; background: #fff; font-weight: 800; }.numberPadButton:hover { border-color: #c45d32; background: #fffaf5; }.numberPadButton:active { background: #f6e6d7; }
+.childToggle { min-height: 44px; border: 1px solid #d9d1c8; border-radius: 10px; padding: 10px 13px; background: #fffdf9; color: #2c383d; font-weight: 800; text-align: left; }
+.totalBox { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; }
+.totalBox strong { text-align: right; }
+.totalBox small { grid-column: 1 / -1; }

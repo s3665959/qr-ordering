@@ -18,7 +18,8 @@
     "staff:create-owner": "tsx scripts/create-owner.ts",
     "test:domain": "tsx scripts/check-domain.ts",
     "test:integration": "tsx scripts/integration-flow.ts",
-    "test:integration:testdb": "node --env-file=.env.test ./node_modules/tsx/dist/cli.mjs scripts/integration-flow.ts"
+    "test:integration:testdb": "node --env-file=.env.test ./node_modules/tsx/dist/cli.mjs scripts/integration-flow.ts",
+    "test:browser:child-toggle": "node --env-file=.env.test ./node_modules/tsx/dist/cli.mjs scripts/browser-child-toggle.ts"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "7.10.0",
@@ -38,6 +39,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
+    "playwright": "^1.63.0",
     "prisma": "7.10.0",
     "tsx": "4.20.6",
     "typescript": "^5"

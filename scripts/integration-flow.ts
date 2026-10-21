@@ -53,7 +53,8 @@ async function api(path: string, init: RequestInit = {}, cookie = "") {
 }
 
 function expectStatus(response: Response, expected: number, body: unknown) {
-  assert.equal(response.status, expected, `expected ${expected}, got ${response.status}: ${JSON.stringify(body)}`);
+  void body;
+  assert.equal(response.status, expected, `expected ${expected}, got ${response.status}`);
 }
 
 function cookieFrom(response: Response) {
@@ -67,10 +68,13 @@ async function main() {
   const pork = packages.find((item) => item.code === "PORK");
   const beef = packages.find((item) => item.code === "PORK_BEEF");
   assert(pork && beef, "seed packages are required");
-  assert.equal(Number(beef.pricePerPerson), 399, "pork and beef package source price must be 399");
+  assert.equal(Number(beef.pricePerPerson), 339);
+  assert.equal(Number(beef.childPricePerPerson), 169);
+  assert.equal(Number(pork.pricePerPerson), 299);
+  assert.equal(Number(pork.childPricePerPerson), 149);
   const historicalBeefSnapshots = new Map(
-    (await prisma.tableSession.findMany({ where: { packageId: beef.id }, select: { id: true, pricePerPersonSnapshot: true, totalAmount: true } }))
-      .map((session) => [session.id, `${session.pricePerPersonSnapshot}:${session.totalAmount}`] as const),
+    (await prisma.tableSession.findMany({ where: { packageId: beef.id }, select: { id: true, guestCount: true, adultCount: true, childCount: true, pricePerPersonSnapshot: true, childPricePerPersonSnapshot: true, totalAmount: true, openedAt: true, startedAt: true, endsAt: true } }))
+      .map((session) => [session.id, JSON.stringify(session)] as const),
   );
 
   const ownerRole = await prisma.role.findUniqueOrThrow({ where: { code: "OWNER" } });
@@ -107,9 +111,20 @@ async function main() {
 
   const invalidGuestCount = await api("/api/staff/table-sessions", {
     method: "POST",
-    body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, guestCount: 0 }),
+    body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, adultCount: 0, childCount: 0, guestCount: 0 }),
   }, ownerCookie);
   expectStatus(invalidGuestCount.response, 400, invalidGuestCount.body);
+  for (const counts of [
+    { adultCount: -1, childCount: 2, guestCount: 1 },
+    { adultCount: 1.5, childCount: 0, guestCount: 1.5 },
+    { adultCount: 3, childCount: 2, guestCount: 4 },
+    { adultCount: 99, childCount: 2, guestCount: 101 },
+  ]) {
+    const invalid = await api("/api/staff/table-sessions", {
+      method: "POST", body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, ...counts }),
+    }, ownerCookie);
+    expectStatus(invalid.response, 400, invalid.body);
+  }
 
   const setTables = async (count: number) => {
     const result = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count }) }, ownerCookie);
@@ -135,8 +150,9 @@ async function main() {
   assert.equal(await prisma.diningTable.count({ where: { storeId: store.id, isActive: true, tableNumber: { in: Array.from({ length: 50 }, (_, index) => String(index + 1)) } } }), 50, "setting 50 tables must activate tables 1-50");
 
   const table21 = await prisma.diningTable.findFirstOrThrow({ where: { storeId: store.id, tableNumber: "21" } });
-  const numberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table21.id, packageId: pork.id, guestCount: 3 }) }, ownerCookie);
+  const numberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table21.id, packageId: pork.id, adultCount: 3, childCount: 0, guestCount: 3 }) }, ownerCookie);
   expectStatus(numberOpen.response, 201, numberOpen.body);
+  assert.equal(Number(((numberOpen.body as Json).session as Json).totalAmount), 897, "zero children must charge adults only");
   const numberSessionId = String(((numberOpen.body as Json).session as Json).id);
   const numberClosed = await api(`/api/staff/table-sessions/${numberSessionId}/close`, { method: "POST" }, ownerCookie);
   expectStatus(numberClosed.response, 200, numberClosed.body);
@@ -146,7 +162,7 @@ async function main() {
   assert(await prisma.tableSession.findUnique({ where: { id: numberSessionId } }), "reducing count must preserve table session history");
 
   const table20 = await prisma.diningTable.findFirstOrThrow({ where: { storeId: store.id, tableNumber: "20" } });
-  const activeNumberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2 }) }, ownerCookie);
+  const activeNumberOpen = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId: table20.id, packageId: pork.id, adultCount: 2, childCount: 0, guestCount: 2 }) }, ownerCookie);
   expectStatus(activeNumberOpen.response, 201, activeNumberOpen.body);
   const activeNumberSessionId = String(((activeNumberOpen.body as Json).session as Json).id);
   const blockedReduction = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count: 19 }) }, ownerCookie);
@@ -161,14 +177,14 @@ async function main() {
 
   const reductionBeforeOpen = await api("/api/staff/table-sessions", {
     method: "POST",
-    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2 }),
+    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, adultCount: 2, childCount: 0, guestCount: 2 }),
   }, ownerCookie);
   expectStatus(reductionBeforeOpen.response, 404, reductionBeforeOpen.body);
   assert.equal(await prisma.activeTableSession.findUnique({ where: { tableId: table20.id } }), null, "a reduced table must not get an active session");
 
   const concurrentOpen = () => api("/api/staff/table-sessions", {
     method: "POST",
-    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, guestCount: 2 }),
+    body: JSON.stringify({ tableId: table20.id, packageId: pork.id, adultCount: 2, childCount: 0, guestCount: 2 }),
   }, ownerCookie);
   const concurrentReduce = () => api("/api/staff/tables", {
     method: "POST",
@@ -210,7 +226,7 @@ async function main() {
   const restrictedCookie = cookieFrom(restrictedLogin.response);
   const forbidden = await api("/api/staff/table-sessions", {
     method: "POST",
-    body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, guestCount: 1 }),
+    body: JSON.stringify({ tableId: tables[0].id, packageId: pork.id, adultCount: 1, childCount: 0, guestCount: 1 }),
   }, restrictedCookie);
   expectStatus(forbidden.response, 403, forbidden.body);
   const settingsForbidden = await api("/api/staff/tables", { method: "POST", body: JSON.stringify({ count: 20 }) }, restrictedCookie);
@@ -241,8 +257,8 @@ async function main() {
   const available = await api(`/api/staff/menu/items/${itemId}`, { method: "PATCH", body: JSON.stringify({ isAvailable: true, name: `เนื้อทดสอบเปิดขาย ${suffix}` }) }, ownerCookie);
   expectStatus(available.response, 200, available.body);
 
-  const open = async (tableId: string, packageId: string) => {
-    const result = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId, packageId, guestCount: 1 }) }, ownerCookie);
+  const open = async (tableId: string, packageId: string, adultCount = 1, childCount = 0) => {
+    const result = await api("/api/staff/table-sessions", { method: "POST", body: JSON.stringify({ tableId, packageId, adultCount, childCount, guestCount: adultCount + childCount, totalAmount: 1 }) }, ownerCookie);
     expectStatus(result.response, 201, result.body);
     return result.body as { session: Json; qrToken: string | null };
   };
@@ -251,22 +267,46 @@ async function main() {
     expectStatus(result.response, 200, result.body);
   };
 
-  const porkSession = await open(tables[0].id, pork.id);
+  const porkSession = await open(tables[0].id, pork.id, 3, 2);
   assert.equal(porkSession.qrToken, null, "pork package must not issue QR");
-  assert.equal(Number((porkSession.session as Json).pricePerPersonSnapshot), 299, "pork session must snapshot its package price");
+  assert.equal(Number((porkSession.session as Json).pricePerPersonSnapshot), 299);
+  assert.equal(Number((porkSession.session as Json).childPricePerPersonSnapshot), 149);
+  assert.equal(Number((porkSession.session as Json).totalAmount), 1195);
+  assert.equal((porkSession.session as Json).guestCount, 5);
+  assert.equal((porkSession.session as Json).adultCount, 3);
+  assert.equal((porkSession.session as Json).childCount, 2);
+  const porkSlipPath = `/slip/${porkSession.session.id}`;
+  const porkSlip = await fetch(`${baseUrl}${porkSlipPath}`, { headers: { cookie: ownerCookie } });
+  assert.equal(porkSlip.status, 200);
+  assert.match(porkSlip.headers.get("cache-control") ?? "", /no-store/);
+  const porkHtml = await porkSlip.text();
+  assert(porkHtml.includes("ผู้ใหญ่: <!-- -->3") && porkHtml.includes("เด็ก: <!-- -->2"));
+  assert(!porkHtml.includes("QR สำหรับสั่งอาหาร"));
+  assert(porkHtml.includes("ยังไม่เริ่ม"));
+  const forbiddenPorkSlip = await fetch(`${baseUrl}${porkSlipPath}`, { headers: { cookie: restrictedCookie } });
+  assert.equal(forbiddenPorkSlip.status, 404);
   assert.equal(await prisma.payment.count({ where: { tableSessionId: String(porkSession.session.id) } }), 0, "opening a session must not invent a payment method");
   await start(String(porkSession.session.id));
   const porkClosed = await api(`/api/staff/table-sessions/${porkSession.session.id}/close`, { method: "POST" }, ownerCookie);
   expectStatus(porkClosed.response, 200, porkClosed.body);
 
-  const beefSession = await open(tables[1].id, beef.id);
+  const beefSession = await open(tables[1].id, beef.id, 3, 2);
   assert(beefSession.qrToken, "pork+beef package must issue QR");
-  assert.equal(Number((beefSession.session as Json).pricePerPersonSnapshot), 399, "new pork and beef session must snapshot 399");
-  assert.equal(Number((beefSession.session as Json).totalAmount), 399, "new one-person pork and beef session total must be 399");
+  assert.equal(Number((beefSession.session as Json).pricePerPersonSnapshot), 339);
+  assert.equal(Number((beefSession.session as Json).childPricePerPersonSnapshot), 169);
+  assert.equal(Number((beefSession.session as Json).totalAmount), 1355);
+  assert.equal((beefSession.session as Json).guestCount, 5);
+  assert.equal((beefSession.session as Json).adultCount, 3);
+  assert.equal((beefSession.session as Json).childCount, 2);
+  const beefSlip = await fetch(`${baseUrl}/qr/${encodeURIComponent(beefSession.qrToken)}`, { headers: { cookie: ownerCookie } });
+  assert.equal(beefSlip.status, 200);
+  assert.match(beefSlip.headers.get("cache-control") ?? "", /no-store/);
+  const forbiddenBeefSlip = await fetch(`${baseUrl}/qr/${encodeURIComponent(beefSession.qrToken)}`, { headers: { cookie: restrictedCookie } });
+  assert.equal(forbiddenBeefSlip.status, 404);
   assert.equal(await prisma.payment.count({ where: { tableSessionId: String(beefSession.session.id) } }), 0, "opening a session must not invent a payment method");
   for (const [id, snapshot] of historicalBeefSnapshots) {
-    const existing = await prisma.tableSession.findUniqueOrThrow({ where: { id }, select: { pricePerPersonSnapshot: true, totalAmount: true } });
-    assert.equal(`${existing.pricePerPersonSnapshot}:${existing.totalAmount}`, snapshot, "existing session price history must remain unchanged");
+    const existing = await prisma.tableSession.findUniqueOrThrow({ where: { id }, select: { id: true, guestCount: true, adultCount: true, childCount: true, pricePerPersonSnapshot: true, childPricePerPersonSnapshot: true, totalAmount: true, openedAt: true, startedAt: true, endsAt: true } });
+    assert.equal(JSON.stringify(existing), snapshot, "existing session price, count, and time history must remain unchanged");
   }
   const beefId = String(beefSession.session.id);
   const beforeStart = await api(`/api/customer/sessions/${beefSession.qrToken}/orders`, { method: "POST", body: JSON.stringify({ idempotencyKey: `phase7-before-${suffix}`, items: [{ menuItemId: itemId, quantity: 1 }] }) });
@@ -389,7 +429,7 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     checks: [
-      "table count increase/idempotency", "open-before-reduce conflict", "reduce-before-open rejection", "concurrent open/reduce serialization (12 rounds)", "inactive-table invariant", "permission rejection", "database-backed login lockout", "pork package has no QR", "beef package QR", "menu CRUD/image key/availability",
+      "table count increase/idempotency", "open-before-reduce conflict", "reduce-before-open rejection", "concurrent open/reduce serialization (12 rounds)", "inactive-table invariant", "permission rejection", "database-backed login lockout", "guest count validation", "server-calculated adult/child prices", "pork slip without QR", "beef slip with QR", "slip permissions and cache headers", "historical session snapshots", "menu CRUD/image key/availability",
       "pre-start rejection", "customer order and staff queue", "order status workflow", "idempotent retry",
       "expiry behavior", "post-expiry existing order handling", "simplified order transitions", "legacy queue compatibility", "business-day served/cancelled timestamps across 04:00", "old records without completion time", "concurrent status update", "concurrent idempotency", "timer stability", "QR revocation on close",
     ],
@@ -397,7 +437,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  console.error(error instanceof Error ? error.stack : error);
   process.exitCode = 1;
 }).finally(async () => {
   await prisma.$disconnect();
