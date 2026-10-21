@@ -37,3 +37,13 @@ Print CSS responds to 58 mm and 80 mm paper width. Chrome print preview was
 checked at both widths. A physical thermal printer, its driver, cutting,
 scaling, and QR readability on paper still need a device test before relying on
 the printed slips in service.
+
+## Browser regression test
+
+Build and start the app on `http://127.0.0.1:3001` with `.env.test`, then run
+`npm run test:browser:child-toggle`. It uses system Chrome (override with
+`CHROME_BIN`) and mocks the three read-only staff endpoints in the browser. It
+checks desktop and mobile touch: opening the child field, entering two children,
+collapsing it, and using the number pad changes adults while preserving the
+hidden child count and recalculating the total. The test requires a local test
+database configuration and does not write database records.

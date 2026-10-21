@@ -42,6 +42,7 @@ export default function Home() {
   const [openForm, setOpenForm] = useState({ tableNumber: "", packageId: "", adultCount: "2", childCount: "0" });
   const [showChildCount, setShowChildCount] = useState(false);
   const [focusedNumericField, setFocusedNumericField] = useState<NumericField>("tableNumber");
+  const numberPadField = !showChildCount && focusedNumericField === "childCount" ? "adultCount" : focusedNumericField;
   const [tableCount, setTableCount] = useState("");
   const [savingTableCount, setSavingTableCount] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -81,15 +82,15 @@ export default function Home() {
   }
 
   function pressNumberPad(value: string) {
-    updateNumericField(focusedNumericField, `${openForm[focusedNumericField]}${value}`);
+    updateNumericField(numberPadField, `${openForm[numberPadField]}${value}`);
   }
 
   function deleteNumberPadValue() {
-    updateNumericField(focusedNumericField, openForm[focusedNumericField].slice(0, -1));
+    updateNumericField(numberPadField, openForm[numberPadField].slice(0, -1));
   }
 
   function clearNumberPadValue() {
-    updateNumericField(focusedNumericField, "");
+    updateNumericField(numberPadField, "");
   }
 
   async function openTable(event: FormEvent<HTMLFormElement>) {
@@ -186,9 +187,9 @@ export default function Home() {
           <label>หมายเลขโต๊ะ<input type="text" inputMode="numeric" pattern="[0-9]*" minLength={1} maxLength={3} value={openForm.tableNumber} onFocus={() => setFocusedNumericField("tableNumber")} onChange={(event) => updateNumericField("tableNumber", event.target.value)} placeholder="เช่น 12" required /></label>
           <label>แพ็กเกจทั้งโต๊ะ<select value={openForm.packageId} onChange={(event) => setOpenForm((current) => ({ ...current, packageId: event.target.value }))} required><option value="">เลือกแพ็กเกจ</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name} · ผู้ใหญ่ {money(item.pricePerPerson)} บาท · เด็ก {item.childPricePerPerson == null ? "ไม่มีราคา" : `${money(item.childPricePerPerson)} บาท`}{item.allowsBeefOrdering ? " · มี QR เนื้อ" : ""}</option>)}</select></label>
           <label>ผู้ใหญ่<input type="text" inputMode="numeric" pattern="[0-9]*" maxLength={3} value={openForm.adultCount} onFocus={() => setFocusedNumericField("adultCount")} onChange={(event) => updateNumericField("adultCount", event.target.value)} required /></label>
-          <button className={styles.childToggle} type="button" aria-expanded={showChildCount} onClick={() => { setShowChildCount((current) => !current); setFocusedNumericField("childCount"); }}>เด็ก {showChildCount ? "▴" : "▾"}</button>
+          <button className={styles.childToggle} type="button" aria-expanded={showChildCount} onClick={() => { if (showChildCount) { setShowChildCount(false); if (focusedNumericField === "childCount") setFocusedNumericField("adultCount"); } else { setShowChildCount(true); setFocusedNumericField("childCount"); } }}>เด็ก {showChildCount ? "▴" : "▾"}</button>
           {showChildCount && <label>เด็ก<input type="text" inputMode="numeric" pattern="[0-9]*" maxLength={3} value={openForm.childCount} onFocus={() => setFocusedNumericField("childCount")} onChange={(event) => updateNumericField("childCount", event.target.value)} required /></label>}
-          <div className={styles.numberPad} aria-label="แป้นตัวเลข"><div className={styles.numberPadHeader}>กำลังกรอก: <strong>{focusedNumericField === "tableNumber" ? "หมายเลขโต๊ะ" : focusedNumericField === "adultCount" ? "ผู้ใหญ่" : "เด็ก"}</strong></div><div className={styles.numberPadGrid}>{["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => <button className={styles.numberPadButton} key={digit} type="button" onClick={() => pressNumberPad(digit)}>{digit}</button>)}<button className={styles.numberPadButton} type="button" onClick={clearNumberPadValue}>ล้างค่า</button><button className={styles.numberPadButton} type="button" onClick={() => pressNumberPad("0")}>0</button><button className={styles.numberPadButton} type="button" aria-label="ลบตัวเลขล่าสุด" onClick={deleteNumberPadValue}>ลบ</button></div></div>
+          <div className={styles.numberPad} aria-label="แป้นตัวเลข"><div className={styles.numberPadHeader}>กำลังกรอก: <strong>{numberPadField === "tableNumber" ? "หมายเลขโต๊ะ" : numberPadField === "adultCount" ? "ผู้ใหญ่" : "เด็ก"}</strong></div><div className={styles.numberPadGrid}>{["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => <button className={styles.numberPadButton} key={digit} type="button" onClick={() => pressNumberPad(digit)}>{digit}</button>)}<button className={styles.numberPadButton} type="button" onClick={clearNumberPadValue}>ล้างค่า</button><button className={styles.numberPadButton} type="button" onClick={() => pressNumberPad("0")}>0</button><button className={styles.numberPadButton} type="button" aria-label="ลบตัวเลขล่าสุด" onClick={deleteNumberPadValue}>ลบ</button></div></div>
           <div className={styles.totalBox} aria-label="สรุปราคา"><span>ผู้ใหญ่ {validCounts ? adultCount : "—"} × {selectedPackage ? money(selectedPackage.pricePerPerson) : "—"} บาท</span><b>{money(adultSubtotal)} บาท</b><span>เด็ก {validCounts ? childCount : "—"} × {selectedPackage?.childPricePerPerson != null ? money(selectedPackage.childPricePerPerson) : "—"} บาท</span><b>{money(childSubtotal)} บาท</b><span>รวม {validCounts ? guestCount : "—"} คน</span><strong>{money(estimatedTotal)} บาท</strong><small>ทั้งโต๊ะใช้แพ็กเกจเดียวกัน ระบบคำนวณราคาอีกครั้งที่ server ก่อนบันทึก</small></div>
           <button className={styles.submitButton} disabled={submitting || !/^[1-9]\d*$/.test(openForm.tableNumber) || !validCounts || !openForm.packageId || (childCount > 0 && selectedPackage?.childPricePerPerson == null)}>{submitting ? "กำลังบันทึก…" : "ยืนยันเปิดรอบ"}</button>
         </form>
