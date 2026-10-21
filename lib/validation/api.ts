@@ -8,7 +8,12 @@ export const loginSchema = z.object({
 export const openTableSchema = z.object({
   tableId: z.string().uuid(),
   packageId: z.string().uuid(),
+  adultCount: z.number().int().min(0).max(100),
+  childCount: z.number().int().min(0).max(100),
   guestCount: z.number().int().positive().max(100),
+}).refine((value) => value.guestCount === value.adultCount + value.childCount, {
+  message: "จำนวนลูกค้ารวมต้องเท่ากับผู้ใหญ่บวกเด็ก",
+  path: ["guestCount"],
 });
 
 export const tableCountSchema = z.object({

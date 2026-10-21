@@ -180,19 +180,20 @@ model DiningTable {
 }
 
 model BuffetPackage {
-  id                 String         @id @default(uuid()) @db.Char(36)
-  storeId            String         @map("store_id") @db.Char(36)
-  code               String         @db.VarChar(50)
-  name               String         @db.VarChar(191)
-  pricePerPerson     Decimal        @map("price_per_person") @db.Decimal(10, 2)
-  durationMinutes    Int            @default(120) @map("duration_minutes")
-  allowsBeefOrdering Boolean        @default(false) @map("allows_beef_ordering")
-  sortOrder          Int            @default(0) @map("sort_order")
-  isActive           Boolean        @default(true) @map("is_active")
-  createdAt          DateTime       @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt          DateTime       @updatedAt @map("updated_at") @db.DateTime(3)
-  store              Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  tableSessions      TableSession[]
+  id                  String         @id @default(uuid()) @db.Char(36)
+  storeId             String         @map("store_id") @db.Char(36)
+  code                String         @db.VarChar(50)
+  name                String         @db.VarChar(191)
+  pricePerPerson      Decimal        @map("price_per_person") @db.Decimal(10, 2)
+  childPricePerPerson Decimal?       @map("child_price_per_person") @db.Decimal(10, 2)
+  durationMinutes     Int            @default(120) @map("duration_minutes")
+  allowsBeefOrdering  Boolean        @default(false) @map("allows_beef_ordering")
+  sortOrder           Int            @default(0) @map("sort_order")
+  isActive            Boolean        @default(true) @map("is_active")
+  createdAt           DateTime       @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.DateTime(3)
+  store               Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  tableSessions       TableSession[]
 
   @@unique([storeId, code])
   @@index([storeId, isActive, sortOrder])
@@ -200,43 +201,46 @@ model BuffetPackage {
 }
 
 model TableSession {
-  id                         String                      @id @default(uuid()) @db.Char(36)
-  storeId                    String                      @map("store_id") @db.Char(36)
-  tableId                    String                      @map("table_id") @db.Char(36)
-  packageId                  String                      @map("package_id") @db.Char(36)
-  guestCount                 Int                         @map("guest_count")
-  packageNameSnapshot        String                      @map("package_name_snapshot") @db.VarChar(191)
-  pricePerPersonSnapshot     Decimal                     @map("price_per_person_snapshot") @db.Decimal(10, 2)
-  durationMinutesSnapshot    Int                         @map("duration_minutes_snapshot")
-  allowsBeefOrderingSnapshot Boolean                     @map("allows_beef_ordering_snapshot")
-  totalAmount                Decimal                     @map("total_amount") @db.Decimal(10, 2)
-  lifecycleStatus            TableSessionLifecycleStatus @map("lifecycle_status")
-  openedAt                   DateTime                    @default(now()) @map("opened_at") @db.DateTime(3)
-  startedAt                  DateTime?                   @map("started_at") @db.DateTime(3)
-  endsAt                     DateTime?                   @map("ends_at") @db.DateTime(3)
-  closedAt                   DateTime?                   @map("closed_at") @db.DateTime(3)
-  cancelledAt                DateTime?                   @map("cancelled_at") @db.DateTime(3)
-  openedById                 String                      @map("opened_by_id") @db.Char(36)
-  startedById                String?                     @map("started_by_id") @db.Char(36)
-  closedById                 String?                     @map("closed_by_id") @db.Char(36)
-  cancelledById              String?                     @map("cancelled_by_id") @db.Char(36)
-  createdAt                  DateTime                    @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt                  DateTime                    @updatedAt @map("updated_at") @db.DateTime(3)
-  store                      Store                       @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  table                      DiningTable                 @relation(fields: [tableId], references: [id], onDelete: Restrict)
-  package                    BuffetPackage               @relation(fields: [packageId], references: [id], onDelete: Restrict)
-  openedBy                   StaffUser                   @relation("TableSessionOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
-  startedBy                  StaffUser?                  @relation("TableSessionStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
-  closedBy                   StaffUser?                  @relation("TableSessionClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
-  cancelledBy                StaffUser?                  @relation("TableSessionCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
-  activeTablePointer         ActiveTableSession?
-  payments                   Payment[]
-  qrTokens                   QrAccessToken[]
-  activeQrToken              ActiveQrToken?
-  extensions                 TableSessionExtension[]
-  events                     TableSessionEvent[]
-  alerts                     StaffAlert[]
-  orders                     Order[]
+  id                          String                      @id @default(uuid()) @db.Char(36)
+  storeId                     String                      @map("store_id") @db.Char(36)
+  tableId                     String                      @map("table_id") @db.Char(36)
+  packageId                   String                      @map("package_id") @db.Char(36)
+  guestCount                  Int                         @map("guest_count")
+  adultCount                  Int                         @default(0) @map("adult_count")
+  childCount                  Int                         @default(0) @map("child_count")
+  packageNameSnapshot         String                      @map("package_name_snapshot") @db.VarChar(191)
+  pricePerPersonSnapshot      Decimal                     @map("price_per_person_snapshot") @db.Decimal(10, 2)
+  childPricePerPersonSnapshot Decimal?                    @map("child_price_per_person_snapshot") @db.Decimal(10, 2)
+  durationMinutesSnapshot     Int                         @map("duration_minutes_snapshot")
+  allowsBeefOrderingSnapshot  Boolean                     @map("allows_beef_ordering_snapshot")
+  totalAmount                 Decimal                     @map("total_amount") @db.Decimal(10, 2)
+  lifecycleStatus             TableSessionLifecycleStatus @map("lifecycle_status")
+  openedAt                    DateTime                    @default(now()) @map("opened_at") @db.DateTime(3)
+  startedAt                   DateTime?                   @map("started_at") @db.DateTime(3)
+  endsAt                      DateTime?                   @map("ends_at") @db.DateTime(3)
+  closedAt                    DateTime?                   @map("closed_at") @db.DateTime(3)
+  cancelledAt                 DateTime?                   @map("cancelled_at") @db.DateTime(3)
+  openedById                  String                      @map("opened_by_id") @db.Char(36)
+  startedById                 String?                     @map("started_by_id") @db.Char(36)
+  closedById                  String?                     @map("closed_by_id") @db.Char(36)
+  cancelledById               String?                     @map("cancelled_by_id") @db.Char(36)
+  createdAt                   DateTime                    @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt                   DateTime                    @updatedAt @map("updated_at") @db.DateTime(3)
+  store                       Store                       @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  table                       DiningTable                 @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  package                     BuffetPackage               @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  openedBy                    StaffUser                   @relation("TableSessionOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
+  startedBy                   StaffUser?                  @relation("TableSessionStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  closedBy                    StaffUser?                  @relation("TableSessionClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  cancelledBy                 StaffUser?                  @relation("TableSessionCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  activeTablePointer          ActiveTableSession?
+  payments                    Payment[]
+  qrTokens                    QrAccessToken[]
+  activeQrToken               ActiveQrToken?
+  extensions                  TableSessionExtension[]
+  events                      TableSessionEvent[]
+  alerts                      StaffAlert[]
+  orders                      Order[]
 
   @@index([storeId, lifecycleStatus])
   @@index([tableId, openedAt])
