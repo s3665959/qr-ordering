@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 
 type TableStatus = "AVAILABLE" | "PAID_PENDING_START" | "ACTIVE" | "ENDING_SOON" | "TIME_EXPIRED" | "CLOSED" | "CANCELLED";
@@ -44,6 +44,9 @@ export default function Home() {
   const [tableCount, setTableCount] = useState("");
   const [savingTableCount, setSavingTableCount] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [printingQr, setPrintingQr] = useState(false);
+  const [qrFallbackUrl, setQrFallbackUrl] = useState("");
+  const qrRequestInFlight = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -116,13 +119,44 @@ export default function Home() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "ดำเนินการไม่สำเร็จ"); }
   }
   async function printQr(sessionId: string) {
-    const popup = window.open("about:blank", "_blank", "noopener,noreferrer");
+    if (qrRequestInFlight.current) return;
+    qrRequestInFlight.current = true;
+    setPrintingQr(true);
+    setQrFallbackUrl("");
+    setError("");
+    // Keep the handle for navigation and cleanup; noopener in window.open can return null
+    // even when the browser has opened a window.
+    let popup: Window | null = null;
     try {
+      popup = window.open("about:blank", "_blank");
+      if (popup) {
+        popup.opener = null;
+        popup.document.title = "กำลังสร้าง QR…";
+        const referrer = popup.document.createElement("meta");
+        referrer.name = "referrer";
+        referrer.content = "no-referrer";
+        popup.document.head.append(referrer);
+        popup.document.body.textContent = "กำลังสร้าง QR…";
+      }
       const result = await api<{ qrToken: string }>(`/api/staff/table-sessions/${sessionId}/qr`, { method: "POST" });
       const target = `/qr/${encodeURIComponent(result.qrToken)}`;
-      if (popup) popup.location.href = target; else window.open(target, "_blank", "noopener,noreferrer");
+      if (popup && !popup.closed) {
+        try {
+          popup.location.replace(target);
+        } catch {
+          popup.close();
+          setQrFallbackUrl(target);
+          setError("ไม่สามารถเปิดหน้า QR ได้ กรุณากดลิงก์ด้านล่าง");
+        }
+      } else {
+        setQrFallbackUrl(target);
+        setError("ไม่สามารถเปิดหน้า QR ได้ กรุณากดลิงก์ด้านล่าง");
+      }
     } catch (cause) {
       popup?.close(); setError(cause instanceof Error ? cause.message : "สร้าง QR ไม่สำเร็จ");
+    } finally {
+      qrRequestInFlight.current = false;
+      setPrintingQr(false);
     }
   }
 
@@ -134,11 +168,11 @@ export default function Home() {
   const expiredCount = tables.filter((table) => table.effectiveStatus === "TIME_EXPIRED").length;
   return <main className={styles.shell}>
     <header className={styles.header}><div><span className={styles.eyebrow}>SHABU CONTROL / FRONT DESK</span><h1>ผังโต๊ะและเปิดรอบ</h1><p>เปิดรอบ เริ่มใช้โต๊ะ และติดตามเวลาจาก Backend</p></div><div className={styles.staffBadge}><a href="/orders">คิวออเดอร์</a><a href="/menu">จัดการเมนู</a><span className={styles.liveDot} />{staff?.displayName ?? "พนักงาน"}</div></header>
-    {(error || actionMessage) && <div className={error ? styles.alertError : styles.alertSuccess}>{error || actionMessage}</div>}
+    {(error || actionMessage) && <div className={error ? styles.alertError : styles.alertSuccess}>{error || actionMessage}{error && qrFallbackUrl && <>{" "}<a href={qrFallbackUrl} target="_blank" rel="noopener noreferrer">เปิดหน้า QR</a></>}</div>}
     <section className={styles.summary} aria-label="สรุปสถานะโต๊ะ"><div><span>โต๊ะทั้งหมด</span><strong>{tables.length}</strong></div><div><span>กำลังใช้งาน</span><strong>{activeCount}</strong></div><div><span>ครบเวลา รอปิด</span><strong className={expiredCount ? styles.dangerText : ""}>{expiredCount}</strong></div><div><span>อัปเดตล่าสุด</span><strong className={styles.clock}>{displayNowMs ? new Date(displayNowMs).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }) : "—"}</strong></div></section>
     <div className={styles.workspace}>
       <section className={styles.panel}><div className={styles.panelHeading}><div><span className={styles.eyebrow}>LIVE FLOOR</span><h2>ผังโต๊ะ</h2></div><span className={styles.polling}><span className={styles.liveDot} />อัปเดตทุก 2 วินาที</span></div>{canManageSettings && <form className={styles.settingsForm} onSubmit={saveTableCount}><label>จำนวนโต๊ะ<input type="number" min="1" max="200" step="1" value={tableCount} onChange={(event) => setTableCount(event.target.value)} placeholder="เช่น 20 หรือ 50" required /></label><button className={styles.secondaryButton} disabled={savingTableCount}>{savingTableCount ? "กำลังบันทึก…" : "บันทึกจำนวนโต๊ะ"}</button></form>}<div className={styles.tableGrid}>
-        {tables.map((table) => { const session = table.activeSession; const status = table.effectiveStatus; return <article className={`${styles.tableCard} ${status === "TIME_EXPIRED" ? styles.cardExpired : ""}`} key={table.id}><div className={styles.tableTop}><span className={styles.tableNumber}>{table.displayName}</span><span className={`${styles.status} ${statusClass[status]}`}>{statusLabels[status]}</span></div>{session ? <><div className={styles.packageLine}>{session.packageNameSnapshot}<span>{session.guestCount} คน</span></div><div className={styles.timer}>{remainingLabel(session.endsAt, nowMs)}</div><div className={styles.timerMeta}>{session.startedAt ? `เริ่ม ${new Date(session.startedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}` : "รอเริ่มใช้โต๊ะ"}</div><div className={styles.cardActions}>{status === "PAID_PENDING_START" && <button className={styles.primaryButton} onClick={() => void sessionAction(session.id, "start")}>เริ่มใช้โต๊ะ</button>}{session.allowsBeefOrderingSnapshot && status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.secondaryButton} onClick={() => void printQr(session.id)}>พิมพ์ QR</button>}{status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.textButton} onClick={() => void sessionAction(session.id, "close")}>ปิดรอบ</button>}</div></> : <div className={styles.emptyTable}>พร้อมรับลูกค้า</div>}</article>; })}
+        {tables.map((table) => { const session = table.activeSession; const status = table.effectiveStatus; return <article className={`${styles.tableCard} ${status === "TIME_EXPIRED" ? styles.cardExpired : ""}`} key={table.id}><div className={styles.tableTop}><span className={styles.tableNumber}>{table.displayName}</span><span className={`${styles.status} ${statusClass[status]}`}>{statusLabels[status]}</span></div>{session ? <><div className={styles.packageLine}>{session.packageNameSnapshot}<span>{session.guestCount} คน</span></div><div className={styles.timer}>{remainingLabel(session.endsAt, nowMs)}</div><div className={styles.timerMeta}>{session.startedAt ? `เริ่ม ${new Date(session.startedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}` : "รอเริ่มใช้โต๊ะ"}</div><div className={styles.cardActions}>{status === "PAID_PENDING_START" && <button className={styles.primaryButton} onClick={() => void sessionAction(session.id, "start")}>เริ่มใช้โต๊ะ</button>}{session.allowsBeefOrderingSnapshot && status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.secondaryButton} disabled={printingQr} onClick={() => void printQr(session.id)}>{printingQr ? "กำลังสร้าง QR…" : "พิมพ์ QR"}</button>}{status !== "CLOSED" && status !== "CANCELLED" && <button className={styles.textButton} onClick={() => void sessionAction(session.id, "close")}>ปิดรอบ</button>}</div></> : <div className={styles.emptyTable}>พร้อมรับลูกค้า</div>}</article>; })}
         {!tables.length && <div className={styles.emptyState}>ยังไม่มีโต๊ะที่เปิดใช้งานในสาขานี้{canManageSettings ? " — กรอกจำนวนโต๊ะด้านบนเพื่อสร้างโต๊ะ 1 ถึงจำนวนที่ต้องการ" : " — กรุณาแจ้งผู้มีสิทธิ์ SETTINGS_MANAGE ให้ตั้งจำนวนโต๊ะ"}</div>}
       </div></section>
       <section className={styles.panel}><div className={styles.panelHeading}><div><span className={styles.eyebrow}>CHECKOUT</span><h2>เปิดรอบใหม่</h2></div></div><form className={styles.openForm} onSubmit={openTable}><label>หมายเลขโต๊ะ<input type="text" inputMode="numeric" pattern="[0-9]*" minLength={1} maxLength={3} value={openForm.tableNumber} onFocus={() => setFocusedNumericField("tableNumber")} onChange={(event) => updateNumericField("tableNumber", event.target.value)} placeholder="เช่น 12" required /></label><label>แพ็กเกจทั้งโต๊ะ<select value={openForm.packageId} onChange={(event) => setOpenForm((current) => ({ ...current, packageId: event.target.value }))} required><option value="">เลือกแพ็กเกจ</option>{packages.map((item) => <option key={item.id} value={item.id}>{item.name} · {money(item.pricePerPerson)} บาท/คน{item.allowsBeefOrdering ? " · มี QR เนื้อ" : ""}</option>)}</select></label><label>จำนวนลูกค้า<input type="text" inputMode="numeric" pattern="[0-9]*" minLength={1} maxLength={3} value={openForm.guestCount} onFocus={() => setFocusedNumericField("guestCount")} onChange={(event) => updateNumericField("guestCount", event.target.value)} required /></label><div className={styles.numberPad} aria-label="แป้นตัวเลข"><div className={styles.numberPadHeader}>กำลังกรอก: <strong>{focusedNumericField === "tableNumber" ? "หมายเลขโต๊ะ" : "จำนวนลูกค้า"}</strong></div><div className={styles.numberPadGrid}>{["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => <button className={styles.numberPadButton} key={digit} type="button" onClick={() => pressNumberPad(digit)}>{digit}</button>)}<button className={styles.numberPadButton} type="button" onClick={clearNumberPadValue}>ล้างค่า</button><button className={styles.numberPadButton} type="button" onClick={() => pressNumberPad("0")}>0</button><button className={styles.numberPadButton} type="button" aria-label="ลบตัวเลขล่าสุด" onClick={deleteNumberPadValue}>ลบ</button></div></div><div className={styles.totalBox}><span>ราคารอบนี้</span><strong>{money(estimatedTotal)} บาท</strong><small>เลือกแพ็กเกจและจำนวนลูกค้าเพื่อคำนวณราคา ระบบจะบันทึกราคานี้ไว้ในรอบใหม่</small></div><button className={styles.submitButton} disabled={submitting || !/^[1-9]\d*$/.test(openForm.tableNumber) || !/^[1-9]\d*$/.test(openForm.guestCount) || !openForm.packageId}>{submitting ? "กำลังบันทึก…" : "ยืนยันเปิดรอบ"}</button></form></section>
