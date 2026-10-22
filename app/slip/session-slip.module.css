@@ -7,14 +7,13 @@
 .printButton { margin-top: 8mm; width: 100%; padding: 12px; background: #000; border: 0; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
 .printButton:disabled { opacity: .5; cursor: wait; }
 @media print {
-  @page { size: auto; margin: 0; }
-  .page { display: block; min-height: 0; padding: 0; background: #fff; }
-  .slip { width: 100%; max-width: none; padding: 5mm 3mm; box-shadow: none; break-inside: avoid; }
-  .printButton, .loading { display: none; }
-}
-@media print and (max-width: 65mm) {
-  .slip { padding: 3mm 2mm; }
+  @page { margin: 0; }
+  :global(html):has(.page) { height: auto; }
+  :global(body):has(.page) { display: block; min-height: 0; }
+  .page { display: block; width: min(100%, 58mm); min-height: 0; padding: 0; background: #fff; }
+  .slip { width: 100%; max-width: none; padding: 3mm 2mm; box-shadow: none; }
   .slip h1 { font-size: 17px; }
   .details p { font-size: 12px; }
   .qr { width: min(100%, 42mm); }
+  .printButton, .loading { display: none; }
 }
