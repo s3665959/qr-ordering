@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { PrismaClient } from "../generated/prisma/client";
 import { hashPassword } from "../lib/auth/password";
+import { checkSlipPrint } from "./check-slip-print";
 
 const expectedAppUrl = "https://qr-order.test";
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -303,6 +304,9 @@ async function main() {
   assert.match(beefSlip.headers.get("cache-control") ?? "", /no-store/);
   const forbiddenBeefSlip = await fetch(`${baseUrl}/qr/${encodeURIComponent(beefSession.qrToken)}`, { headers: { cookie: restrictedCookie } });
   assert.equal(forbiddenBeefSlip.status, 404);
+  if (process.env.CHECK_SLIP_PRINT === "1") {
+    await checkSlipPrint(baseUrl, ownerCookie, porkSlipPath, `/qr/${encodeURIComponent(beefSession.qrToken)}`);
+  }
   assert.equal(await prisma.payment.count({ where: { tableSessionId: String(beefSession.session.id) } }), 0, "opening a session must not invent a payment method");
   for (const [id, snapshot] of historicalBeefSnapshots) {
     const existing = await prisma.tableSession.findUniqueOrThrow({ where: { id }, select: { id: true, guestCount: true, adultCount: true, childCount: true, pricePerPersonSnapshot: true, childPricePerPersonSnapshot: true, totalAmount: true, openedAt: true, startedAt: true, endsAt: true } });
