@@ -21,7 +21,7 @@ export default function SessionSlip({ tableName, adultCount, childCount, date, s
     if (!qrToken) return;
     const baseUrl = appUrl || window.location.origin;
     void QRCode.toDataURL(`${baseUrl.replace(/\/$/, "")}/customer/${encodeURIComponent(qrToken)}`, {
-      width: 600, margin: 2, errorCorrectionLevel: "M",
+      width: 420, margin: 2, errorCorrectionLevel: "M",
     }).then(setQrImage);
   }, [appUrl, qrToken]);
 
@@ -36,7 +36,7 @@ export default function SessionSlip({ tableName, adultCount, childCount, date, s
         <p>ผู้ใหญ่: {adultCount}</p>
         <p>เด็ก: {childCount}</p>
       </div>
-      {qrToken && (qrImage ? <img className={styles.qr} src={qrImage} alt="QR สำหรับสั่งอาหาร" /> : <p className={styles.loading}>กำลังสร้าง QR…</p>)}
+      {qrToken && (qrImage ? <img className={styles.qr} src={qrImage} alt="QR สำหรับสั่งอาหาร" /> : <div className={styles.loading}>กำลังสร้าง QR…</div>)}
       <button type="button" className={styles.printButton} disabled={Boolean(qrToken && !qrImage)} onClick={() => window.print()}>พิมพ์ใบโต๊ะ</button>
     </section>
   </main>;
